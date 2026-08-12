@@ -29,7 +29,8 @@ and jobs. Example:
 
 ```yaml
 yt-dlp-options:
-  firefox:
+  firefox: # a name for the options
+    # example options, see below for syntax
     sub-langs: "en.*"
     sponsorblock-mark: "all"
     embed-subs:
@@ -39,12 +40,12 @@ yt-dlp-options:
     cookies-from-browser: "firefox"
 
 archive-jobs:
-  tiktok-watch-on-desktop:
-    url: <some video collection URL that yt-dlp can read>
-    target-dir: ~/desktop
-    options: firefox
-    timer-oncalendar: "*-*-* 01:00:00"
-    timer-randomized-delay: 30m
+  some-collection: # a name for the job
+    url: <some video collection URL> # what to download
+    target-dir: ~/desktop # where to put the downloaded files
+    options: firefox # reference the options defined above
+    timer-oncalendar: "*-*-* 01:00:00" # accepts any systemd OnCalendar value
+    timer-randomized-delay: 30m # accepts any systemd RandomizedDelaySec value
 ```
 
 `yt-dlp-options` maps a set name to yt-dlp command line flags. Drop the `--`
@@ -68,11 +69,11 @@ The host `~/.config/yt-dlp/config` file is ignored, so a run is reproducible.
 ## Use
 
 ```nushell
-yt-dlp-archiver list
-yt-dlp-archiver show --job tiktok-watch-on-desktop
-yt-dlp-archiver run --job tiktok-watch-on-desktop
-yt-dlp-archiver run --all
-yt-dlp-archiver run --job tiktok-watch-on-desktop --dry-run
+yt-dlp-archiver list                                  # list all jobs
+yt-dlp-archiver run --job some-collection             # run a job
+yt-dlp-archiver run --all                             # run all jobs
+yt-dlp-archiver run --job some-collection --dry-run   # show what would be downloaded
+yt-dlp-archiver show --job some-collection            # show equivalent yt-dlp command
 ```
 
 Run an ad-hoc URL without a job from a config file:
@@ -89,8 +90,8 @@ There is a process in this program that can fix previously-downloaded files that
 have no audio track (likely from TikTok).
 
 ```nushell
-yt-dlp-archiver verify --job tiktok-watch-on-desktop
-yt-dlp-archiver verify --job tiktok-watch-on-desktop --repair
+yt-dlp-archiver verify --job some-collection
+yt-dlp-archiver verify --job some-collection --repair
 ```
 
 `verify` probes every media file in the target directory and reports the files
@@ -105,7 +106,7 @@ stream stays untouched. Files that already have audio are not modified.
 ```nushell
 yt-dlp-archiver systemd install --all
 yt-dlp-archiver systemd status
-yt-dlp-archiver systemd uninstall --job tiktok-watch-on-desktop
+yt-dlp-archiver systemd uninstall --job some-collection
 ```
 
 `install` writes three kinds of file into `~/.config/systemd/user`:
@@ -123,13 +124,14 @@ to write the files without calling `systemctl`.
 A job with no `timer-oncalendar` gets no timer. Run it by hand.
 
 Every generated file starts with `# Managed by yt-dlp-archiver. Do not edit.`
-`uninstall` removes only files that carry this line.
+This serves as a marker for `uninstall`, which removes only files that carry
+this line.
 
 Inspect a job:
 
 ```nushell
 systemctl --user list-timers "yt-dlp-archiver@*"
-journalctl --user --unit "yt-dlp-archiver@tiktok-watch-on-desktop.service" --lines 50
+journalctl --user --unit "yt-dlp-archiver@some-collection.service" --lines 50
 ```
 
 ## Shell completion
@@ -137,32 +139,18 @@ journalctl --user --unit "yt-dlp-archiver@tiktok-watch-on-desktop.service" --lin
 Shell completion is provided by
 [carapace](https://github.com/carapace-sh/carapace).
 
-`yt-dlp-archiver completions carapace` prints a carapace spec on stdout. The
-command reads the live command tree, so the spec stays correct after a change to
-the CLI.
-
-One spec serves every shell that carapace supports: bash, zsh, fish, nushell,
-elvish, powershell, tcsh, xonsh and oil.
-
-These values complete from your own data:
-
-| Flag           | Candidates                      |
-| -------------- | ------------------------------- |
-| `--job`        | job names from your config file |
-| `--options`    | option set names from that file |
-| `--config`     | files                           |
-| `--target-dir` | directories                     |
-
-### Install the completion
+Install the completion spec for carapace with:
 
 ```bash
 mkdir -p ~/.config/carapace/specs
 yt-dlp-archiver completions carapace > ~/.config/carapace/specs/yt-dlp-archiver.yaml
 ```
 
-Then open a new shell to take effect.
+Rewrite the spec after each upgrade of yt-dlp-archiver.
 
-Regenerate the spec after each upgrade of yt-dlp-archiver.
+### Install the completion
+
+Then open a new shell to take effect.
 
 ## Paths
 
