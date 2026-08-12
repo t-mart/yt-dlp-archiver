@@ -1,0 +1,30 @@
+[project]
+name = "yt-dlp-archiver"
+version = "0.1.0"
+description = "Add your description here"
+readme = "README.md"
+authors = [
+    { name = "Tim Martin", email = "tim@timmart.in" }
+]
+requires-python = ">=3.14"
+dependencies = [
+    "pyyaml>=6.0.3",
+    "typer>=0.27.1",
+    # No curl-cffi extra. Its impersonation makes TikTok return an unexpected
+    # webpage response, which fails extraction. See README.
+    "yt-dlp[default]>=2026.7.4",
+]
+
+[project.scripts]
+yt-dlp-archiver = "yt_dlp_archiver:main"
+
+[build-system]
+requires = ["uv_build>=0.12.3,<0.13.0"]
+build-backend = "uv_build"
+
+[dependency-groups]
+dev = [
+    "pytest>=9.1.1",
+    "ruff>=0.16.2",
+    "ty>=0.0.70",
+]
