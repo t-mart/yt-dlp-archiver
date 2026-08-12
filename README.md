@@ -1,9 +1,9 @@
 # yt-dlp-archiver
 
-Download remote video sources into local directories. Helpful for archiving
-sources of content that update frequently: TikTok collections, YouTube
-channels/playlists, etc. Most helpful when run automatically, such as on a
-systemd timer, which this program can install for you.
+Download remote video collections into local directories. Helpful for archiving
+sources that update frequently: TikTok collections, YouTube channels/playlists,
+etc. Most helpful when run on a schedule, such as on a systemd timer, which this
+program can install for you.
 
 Uses embedded [yt-dlp](https://github.com/yt-dlp/yt-dlp) with it's
 `--download-archive` flag to only download new items.
@@ -14,7 +14,7 @@ no audio track repairs them in place.
 ## Install
 
 ```nushell
-uv tool install --editable .
+uv tool install git+https://github.com/t-mart/yt-dlp-archiver.git
 ```
 
 `ffmpeg` and `ffprobe` must be on `PATH`.
@@ -24,7 +24,8 @@ uv tool install --editable .
 Since this program is designed to be run repeatedly on the same set of URLs, it
 uses a YAML config file to define jobs.
 
-Create a file at `~/.config/yt-dlp-archiver/config.yaml` and define your options and jobs. Example:
+Create a file at `~/.config/yt-dlp-archiver/config.yaml` and define your options
+and jobs. Example:
 
 ```yaml
 yt-dlp-options:
