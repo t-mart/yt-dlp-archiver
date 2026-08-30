@@ -81,9 +81,14 @@ media selection. Configured values for these options have no effect.
 The program follows TikTok short-link redirects before it selects a downloader.
 It sends `/video/` URLs to yt-dlp and `/photo/` URLs to gallery-dl.
 
-Each photo post becomes one Matroska file. The video stream contains the original
-JPEG data without a lossy conversion. Each image appears for five seconds and
-has a chapter. The optional audio track repeats until the slideshow ends.
+Each photo post becomes one Matroska file. A 30 fps H.264 video stream shows
+each image for five seconds. Each image has a chapter and a keyframe. The
+optional AAC audio track repeats until the slideshow ends. The program removes
+edge silence from the playback copy before it repeats the audio.
+
+The file attaches every original JPEG and the original audio file without
+modification. The `COMMENT` tag describes this layout. The `SOURCE_URL` tag
+contains the TikTok URL.
 
 The final filename uses the yt-dlp output template. The default name contains
 the TikTok title, tags, and post ID.

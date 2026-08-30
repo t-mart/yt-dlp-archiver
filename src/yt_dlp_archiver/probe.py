@@ -41,7 +41,7 @@ def probe(path: Path) -> Streams:
             "-v",
             "error",
             "-show_entries",
-            "stream=codec_type,bit_rate",
+            "stream=codec_type,bit_rate:stream_disposition=attached_pic",
             "-of",
             "json",
             str(path),
@@ -55,7 +55,12 @@ def probe(path: Path) -> Streams:
 
     streams = json.loads(result.stdout or "{}").get("streams", [])
     audio = [s for s in streams if s.get("codec_type") == "audio"]
-    video = [s for s in streams if s.get("codec_type") == "video"]
+    video = [
+        stream
+        for stream in streams
+        if stream.get("codec_type") == "video"
+        and not stream.get("disposition", {}).get("attached_pic")
+    ]
     bitrate = None
     if audio:
         try:
@@ -133,14 +138,14 @@ def mux_audio(video_source: Path, audio_source: Path, destination: Path) -> None
 
 
 def source_url(path: Path) -> str | None:
-    """Read the source URL that --embed-metadata writes into the comment tag."""
+    """Read the source URL from embedded metadata."""
     result = subprocess.run(
         [
             _require("ffprobe"),
             "-v",
             "error",
             "-show_entries",
-            "format_tags=comment,purl",
+            "format_tags=source_url,purl,comment",
             "-of",
             "json",
             str(path),
@@ -151,8 +156,9 @@ def source_url(path: Path) -> str | None:
     )
     if result.returncode != 0:
         return None
-    tags = json.loads(result.stdout or "{}").get("format", {}).get("tags", {})
-    for key in ("purl", "comment"):
+    raw_tags = json.loads(result.stdout or "{}").get("format", {}).get("tags", {})
+    tags = {str(key).lower(): value for key, value in raw_tags.items()}
+    for key in ("source_url", "purl", "comment"):
         value = tags.get(key)
         if value and str(value).startswith("http"):
             return str(value)

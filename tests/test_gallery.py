@@ -28,7 +28,23 @@ def slideshow_sources(tmp_path: Path) -> tuple[list[Path], Path]:
     audio = tmp_path / "00.mp3"
     _ffmpeg("-f", "lavfi", "-i", "color=red:size=64x80", "-frames:v", "1", str(first))
     _ffmpeg("-f", "lavfi", "-i", "color=blue:size=64x82", "-frames:v", "1", str(second))
-    _ffmpeg("-f", "lavfi", "-i", "sine=frequency=440", "-t", "1", str(audio))
+    _ffmpeg(
+        "-f",
+        "lavfi",
+        "-i",
+        "anullsrc=sample_rate=48000:channel_layout=stereo:d=0.2",
+        "-f",
+        "lavfi",
+        "-i",
+        "sine=frequency=440:sample_rate=48000:duration=0.6",
+        "-f",
+        "lavfi",
+        "-i",
+        "anullsrc=sample_rate=48000:channel_layout=stereo:d=0.2",
+        "-filter_complex",
+        "[1:a]aformat=channel_layouts=stereo[tone];[0:a][tone][2:a]concat=n=3:v=0:a=1",
+        str(audio),
+    )
     return [first, second], audio
 
 
@@ -93,7 +109,9 @@ def test_archived_photo_still_matches_gallery_dl():
     assert download.is_photo
 
 
-def test_mux_keeps_one_jpeg_packet_per_image(slideshow_sources, tmp_path):
+def test_mux_creates_a_standard_slideshow_with_original_media(
+    slideshow_sources, tmp_path
+):
     images, audio = slideshow_sources
     destination = tmp_path / "result.mkv"
     source_url = "https://www.tiktok.com/@someone/photo/123456789"
@@ -103,38 +121,15 @@ def test_mux_keeps_one_jpeg_packet_per_image(slideshow_sources, tmp_path):
     assert streams.video == 1
     assert streams.has_audio
 
-    packets = subprocess.run(
-        [
-            "ffprobe",
-            "-v",
-            "error",
-            "-select_streams",
-            "v:0",
-            "-show_entries",
-            "packet=duration_time,size:stream=avg_frame_rate",
-            "-of",
-            "json",
-            str(destination),
-        ],
-        check=True,
-        capture_output=True,
-        text=True,
-    )
-    video = json.loads(packets.stdout)
-    video_packets = video["packets"]
-    sizes = [int(packet["size"]) for packet in video_packets]
-    assert sizes == [path.stat().st_size for path in images]
-    assert [float(packet["duration_time"]) for packet in video_packets] == [5.0, 5.0]
-    assert video["streams"][0]["avg_frame_rate"] == "1/5"
-
     details = subprocess.run(
         [
             "ffprobe",
             "-v",
             "error",
+            "-count_packets",
+            "-show_streams",
             "-show_chapters",
-            "-show_entries",
-            "format=duration:format_tags=comment,media_type",
+            "-show_format",
             "-of",
             "json",
             str(destination),
@@ -144,9 +139,122 @@ def test_mux_keeps_one_jpeg_packet_per_image(slideshow_sources, tmp_path):
         text=True,
     )
     data = json.loads(details.stdout)
+    video = next(
+        stream for stream in data["streams"] if stream["codec_type"] == "video"
+    )
+    playback_audio = next(
+        stream for stream in data["streams"] if stream["codec_type"] == "audio"
+    )
+    attached_images = [
+        stream
+        for stream in data["streams"]
+        if stream.get("disposition", {}).get("attached_pic")
+    ]
+    attachments = [
+        stream for stream in data["streams"] if stream["codec_type"] == "attachment"
+    ]
+
+    assert video["codec_name"] == "h264"
+    assert video["avg_frame_rate"] == "30/1"
+    assert int(video["nb_read_packets"]) == 300
+    assert playback_audio["codec_name"] == "aac"
+    assert [stream["tags"]["filename"] for stream in attached_images] == [
+        "01.jpg",
+        "02.jpg",
+    ]
+    assert [stream["tags"]["filename"] for stream in attachments] == [
+        "00.mp3",
+    ]
+    assert [stream["tags"]["mimetype"] for stream in attached_images] == [
+        "image/jpeg",
+        "image/jpeg",
+    ]
+    assert [stream["tags"]["mimetype"] for stream in attachments] == [
+        "audio/mpeg",
+    ]
+
+    keyframes = subprocess.run(
+        [
+            "ffprobe",
+            "-v",
+            "error",
+            "-select_streams",
+            "v:0",
+            "-skip_frame",
+            "nokey",
+            "-show_frames",
+            "-show_entries",
+            "frame=best_effort_timestamp_time",
+            "-of",
+            "json",
+            str(destination),
+        ],
+        check=True,
+        capture_output=True,
+        text=True,
+    )
+    keyframe_times = [
+        float(frame["best_effort_timestamp_time"])
+        for frame in json.loads(keyframes.stdout)["frames"]
+    ]
+    assert keyframe_times == pytest.approx([0.0, 5.0], abs=0.02)
+
     assert len(data["chapters"]) == 2
-    assert data["format"]["tags"]["COMMENT"] == source_url
+    assert data["format"]["tags"]["COMMENT"] == gallery.SLIDESHOW_COMMENT
+    assert data["format"]["tags"]["SOURCE_URL"] == source_url
     assert data["format"]["tags"]["MEDIA_TYPE"] == "tiktok-photo"
+    assert probe.source_url(destination) == source_url
+
+    for index, original in enumerate(images, start=1):
+        extracted = tmp_path / f"attachment-{index}{original.suffix}"
+        _ffmpeg(
+            "-i",
+            str(destination),
+            "-map",
+            f"0:v:{index}",
+            "-frames:v",
+            "1",
+            "-c",
+            "copy",
+            str(extracted),
+        )
+        assert extracted.read_bytes() == original.read_bytes()
+
+    extracted_audio = tmp_path / "attachment.mp3"
+    _ffmpeg(
+        "-dump_attachment:t:0",
+        str(extracted_audio),
+        "-i",
+        str(destination),
+        "-map",
+        "0:v:0",
+        "-f",
+        "null",
+        "-",
+    )
+    assert extracted_audio.read_bytes() == audio.read_bytes()
+
+    silence = subprocess.run(
+        [
+            "ffmpeg",
+            "-nostdin",
+            "-v",
+            "info",
+            "-i",
+            str(destination),
+            "-map",
+            "0:a:0",
+            "-af",
+            "silencedetect=noise=-45dB:d=0.05",
+            "-f",
+            "null",
+            "-",
+        ],
+        check=True,
+        capture_output=True,
+        text=True,
+    )
+    assert "silence_duration" not in silence.stderr
 
 
 def test_mux_accepts_a_photo_post_without_audio(slideshow_sources, tmp_path):

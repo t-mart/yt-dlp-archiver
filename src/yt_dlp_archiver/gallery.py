@@ -2,6 +2,7 @@
 
 from __future__ import annotations
 
+import json
 import os
 import shlex
 import shutil
@@ -24,8 +25,21 @@ from . import probe
 from .config import ConfigError, Job
 
 SLIDE_SECONDS = 5
+VIDEO_FPS = 30
 JPEG_SUFFIXES = frozenset({".jpg", ".jpeg"})
 AUDIO_SUFFIXES = frozenset({".aac", ".flac", ".m4a", ".mp3", ".ogg", ".opus"})
+ATTACHMENT_MIME_TYPES = {
+    ".aac": "audio/aac",
+    ".flac": "audio/flac",
+    ".m4a": "audio/mp4",
+    ".mp3": "audio/mpeg",
+    ".ogg": "audio/ogg",
+    ".opus": "audio/ogg",
+}
+SLIDESHOW_COMMENT = (
+    "The H.264 video and optional AAC audio tracks provide playback. "
+    "Original media files are Matroska attachments."
+)
 
 
 @dataclass(frozen=True)
@@ -223,7 +237,8 @@ def _ffmetadata(metadata: dict[str, Any], source_url: str, image_count: int) -> 
         ";FFMETADATA1",
         f"title={escape(title)}",
         f"artist={escape(metadata.get('user') or '')}",
-        f"comment={escape(source_url)}",
+        f"comment={escape(SLIDESHOW_COMMENT)}",
+        f"source_url={escape(source_url)}",
         "media_type=tiktok-photo",
     ]
     for index in range(image_count):
@@ -239,6 +254,46 @@ def _ffmetadata(metadata: dict[str, Any], source_url: str, image_count: int) -> 
             )
         )
     return "\n".join(lines) + "\n"
+
+
+def _canvas_size(ffprobe: str, images: Sequence[Path]) -> tuple[int, int]:
+    sizes = []
+    for image in images:
+        result = subprocess.run(
+            [
+                ffprobe,
+                "-v",
+                "error",
+                "-show_entries",
+                "stream=width,height",
+                "-of",
+                "json",
+                str(image),
+            ],
+            capture_output=True,
+            text=True,
+            check=False,
+        )
+        streams = json.loads(result.stdout or "{}").get("streams", [])
+        if result.returncode or not streams:
+            raise ConfigError(f"ffprobe failed on {image}: {result.stderr.strip()}")
+        sizes.append((int(streams[0]["width"]), int(streams[0]["height"])))
+    width = max(size[0] for size in sizes)
+    height = max(size[1] for size in sizes)
+    return width + width % 2, height + height % 2
+
+
+def _attach(argv: list[str], path: Path, index: int, mime_type: str) -> None:
+    argv.extend(
+        (
+            "-attach",
+            str(path),
+            f"-metadata:s:t:{index}",
+            f"filename={path.name}",
+            f"-metadata:s:t:{index}",
+            f"mimetype={mime_type}",
+        )
+    )
 
 
 def mux_slideshow(
@@ -259,64 +314,144 @@ def mux_slideshow(
     ffmpeg = shutil.which("ffmpeg")
     if not ffmpeg:
         raise ConfigError("ffmpeg is not on PATH")
-
-    work = images[0].parent
-    concat = work / "slides.ffconcat"
-    concat_lines = ["ffconcat version 1.0"]
-    for image in images:
-        concat_lines.extend(
-            (
-                f"file {image.name}",
-                f"option framerate 1/{SLIDE_SECONDS}",
-                f"duration {SLIDE_SECONDS}",
-            )
-        )
-    concat.write_text("\n".join(concat_lines) + "\n", encoding="utf-8")
-
-    chapters = work / "chapters.ffmeta"
-    chapters.write_text(
-        _ffmetadata(metadata, source_url, len(images)), encoding="utf-8"
-    )
+    ffprobe = shutil.which("ffprobe")
+    if not ffprobe:
+        raise ConfigError("ffprobe is not on PATH")
+    canvas_width, canvas_height = _canvas_size(ffprobe, images)
 
     destination.parent.mkdir(parents=True, exist_ok=True)
     with TemporaryDirectory(
         prefix=f".{destination.stem}-", dir=destination.parent
     ) as temp:
         staged = Path(temp) / "slideshow.mkv"
+        chapters = Path(temp) / "chapters.ffmeta"
+        chapters.write_text(
+            _ffmetadata(metadata, source_url, len(images)), encoding="utf-8"
+        )
+        playback_audio = Path(temp) / "audio.wav"
+        if audio:
+            result = subprocess.run(
+                [
+                    ffmpeg,
+                    "-nostdin",
+                    "-y",
+                    "-v",
+                    "error",
+                    "-i",
+                    str(audio),
+                    "-af",
+                    (
+                        "silenceremove=start_periods=1:start_duration=0.02:"
+                        "start_threshold=-45dB:start_silence=0.01,areverse,"
+                        "silenceremove=start_periods=1:start_duration=0.02:"
+                        "start_threshold=-45dB:start_silence=0.01,areverse,"
+                        "asetpts=N/SR/TB"
+                    ),
+                    "-c:a",
+                    "pcm_s16le",
+                    "-ar",
+                    "48000",
+                    str(playback_audio),
+                ],
+                capture_output=True,
+                text=True,
+                check=False,
+            )
+            if result.returncode:
+                raise ConfigError(f"ffmpeg failed: {result.stderr.strip()}")
         argv = [
             ffmpeg,
             "-nostdin",
             "-y",
             "-v",
             "error",
-            "-f",
-            "concat",
-            "-safe",
-            "0",
-            "-i",
-            str(concat),
         ]
-        metadata_input = 1
+        for image in images:
+            argv.extend(
+                (
+                    "-loop",
+                    "1",
+                    "-framerate",
+                    str(VIDEO_FPS),
+                    "-t",
+                    str(SLIDE_SECONDS),
+                    "-i",
+                    str(image),
+                )
+            )
+        audio_input = len(images)
         if audio:
-            argv.extend(("-stream_loop", "-1", "-i", str(audio)))
-            metadata_input = 2
-        argv.extend(("-f", "ffmetadata", "-i", str(chapters), "-map", "0:v:0"))
+            argv.extend(("-stream_loop", "-1", "-i", str(playback_audio)))
+        metadata_input = len(images) + bool(audio)
+        argv.extend(("-f", "ffmetadata", "-i", str(chapters)))
+        video_filters = []
+        video_inputs = []
+        for index in range(len(images)):
+            video_filters.append(
+                f"[{index}:v:0]scale={canvas_width}:{canvas_height}:"
+                "force_original_aspect_ratio=decrease:force_divisible_by=2,"
+                f"pad={canvas_width}:{canvas_height}:(ow-iw)/2:(oh-ih)/2:black,"
+                f"setsar=1,fps={VIDEO_FPS},format=yuv420p,"
+                f"trim=duration={SLIDE_SECONDS},setpts=PTS-STARTPTS[v{index}]"
+            )
+            video_inputs.append(f"[v{index}]")
+        video_filters.append(
+            f"{''.join(video_inputs)}concat=n={len(images)}:v=1:a=0[video]"
+        )
+        argv.extend(("-filter_complex", ";".join(video_filters), "-map", "[video]"))
         if audio:
-            argv.extend(("-map", "1:a:0"))
+            argv.extend(("-map", f"{audio_input}:a:0"))
         argv.extend(
             (
                 "-map_metadata",
                 str(metadata_input),
                 "-map_chapters",
                 str(metadata_input),
-                "-c",
-                "copy",
+                "-c:v",
+                "libx264",
+                "-preset",
+                "medium",
+                "-crf",
+                "15",
+                "-pix_fmt",
+                "yuv420p",
                 "-r",
-                f"1/{SLIDE_SECONDS}",
+                str(VIDEO_FPS),
+                "-g",
+                str(VIDEO_FPS * SLIDE_SECONDS),
+                "-keyint_min",
+                str(VIDEO_FPS * SLIDE_SECONDS),
+                "-sc_threshold",
+                "0",
+                "-force_key_frames",
+                f"expr:gte(t,n_forced*{SLIDE_SECONDS})",
+                "-disposition:v:0",
+                "default",
             )
         )
         if audio:
-            argv.extend(("-t", str(len(images) * SLIDE_SECONDS)))
+            argv.extend(
+                (
+                    "-c:a",
+                    "aac",
+                    "-b:a",
+                    "192k",
+                    "-ar",
+                    "48000",
+                    "-disposition:a:0",
+                    "default",
+                )
+            )
+        argv.extend(("-t", str(len(images) * SLIDE_SECONDS)))
+        for index, image in enumerate(images):
+            _attach(argv, image, index, "image/jpeg")
+        if audio:
+            _attach(
+                argv,
+                audio,
+                len(images),
+                ATTACHMENT_MIME_TYPES[audio.suffix.lower()],
+            )
         argv.extend(("-f", "matroska", str(staged)))
         result = subprocess.run(argv, capture_output=True, text=True, check=False)
         if result.returncode:
