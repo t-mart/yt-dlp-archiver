@@ -11,7 +11,7 @@ from typing import Any
 import yt_dlp
 
 from . import gallery, probe
-from .config import Config, Job
+from .config import Config, ConfigError, Job
 from .repair import AudioRepairPP, fetch_formats, repair_file
 
 
@@ -52,6 +52,56 @@ def _prepare(job: Job) -> None:
     job.archive_file.parent.mkdir(parents=True, exist_ok=True)
 
 
+def _collection_urls(options: dict[str, Any], url: str) -> list[str]:
+    lookup = {
+        **options,
+        "download_archive": None,
+        "extract_flat": True,
+        "lazy_playlist": False,
+        "simulate": True,
+        "skip_download": True,
+    }
+    with yt_dlp.YoutubeDL(lookup) as ydl:
+        info = ydl.extract_info(url, download=False)
+        if info is None:
+            raise ConfigError(f"yt-dlp failed to read collection {url}")
+        entries = info.get("entries") or ()
+        urls = []
+        for entry in entries:
+            if not isinstance(entry, dict):
+                continue
+            entry_url = entry.get("url") or entry.get("webpage_url")
+            if isinstance(entry_url, str):
+                urls.append(entry_url)
+        return urls
+
+
+def _download_videos(options: dict[str, Any], urls: Sequence[str]) -> int:
+    if not urls:
+        return 0
+    with yt_dlp.YoutubeDL(options) as ydl:
+        ydl.add_post_processor(AudioRepairPP(), when="post_process")
+        return ydl.download(list(urls))
+
+
+def _run_tiktok_posts(
+    config: Config,
+    job: Job,
+    options: dict[str, Any],
+    urls: Sequence[str],
+    simulate: bool,
+) -> int:
+    status = 0
+    videos = []
+    flags = config.gallery_dl_argv_for(job)
+    for url in urls:
+        result = gallery.run_photo_job(job, flags, options, url, simulate)
+        status |= result.status
+        if not result.status and not result.is_photo:
+            videos.append(url)
+    return status | _download_videos(options, videos)
+
+
 def run_job(
     config: Config, job: Job, simulate: bool = False, extra: Sequence[str] = ()
 ) -> int:
@@ -65,10 +115,13 @@ def run_job(
             options,
             source.url,
             simulate,
-        )
-    with yt_dlp.YoutubeDL(options) as ydl:
-        ydl.add_post_processor(AudioRepairPP(), when="post_process")
-        return ydl.download([source.url])
+        ).status
+    if source.kind == "video":
+        return _run_tiktok_posts(config, job, options, [source.url], simulate)
+    if source.kind == "collection":
+        urls = _collection_urls(options, source.url)
+        return _run_tiktok_posts(config, job, options, urls, simulate)
+    return _download_videos(options, [source.url])
 
 
 @dataclass(frozen=True)

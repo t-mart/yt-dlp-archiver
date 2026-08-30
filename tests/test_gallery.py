@@ -59,6 +59,8 @@ def test_short_url_uses_its_redirect_target():
 def test_video_and_unrelated_urls_stay_with_yt_dlp():
     video = "https://www.tiktok.com/@someone/video/123456789"
     assert gallery.resolve_source(video).kind == "video"
+    collection = "https://www.tiktok.com/@someone/collection/saved-123456789"
+    assert gallery.resolve_source(collection).kind == "collection"
     assert gallery.resolve_source("https://example.com/watch/1").kind == "other"
 
 
@@ -71,6 +73,24 @@ def test_browser_cookie_option_matches_gallery_dl_tuple():
         "Personal",
         ".tiktok.com",
     )
+
+
+def test_archived_photo_still_matches_gallery_dl():
+    class Base:
+        def __init__(self, _url, _parent=None):
+            self.pred_post = lambda *_: True
+
+        def _init(self):
+            return None
+
+        def handle_directory(self, _metadata):
+            return None
+
+    download = gallery._collector(Base, {"123456789"})("unused")
+    download._init()
+
+    assert not download.pred_post("", {"id": "123456789", "post_type": "image"})
+    assert download.is_photo
 
 
 def test_mux_keeps_one_jpeg_packet_per_image(slideshow_sources, tmp_path):
@@ -196,7 +216,7 @@ def test_runner_routes_a_photo_to_gallery_dl(monkeypatch, tmp_path):
 
     def run_photo(*args):
         called["args"] = args
-        return 7
+        return SimpleNamespace(status=7, is_photo=True)
 
     monkeypatch.setattr(gallery, "run_photo_job", run_photo)
     assert runner.run_job(config, job) == 7
@@ -210,7 +230,7 @@ def test_photo_job_records_only_a_complete_mux(monkeypatch, tmp_path):
         {
             "archive-jobs": {
                 "demo": {
-                    "url": "https://www.tiktok.com/@someone/photo/123456789",
+                    "url": "https://www.tiktok.com/@someone/video/123456789",
                     "target-dir": str(tmp_path),
                 }
             }
@@ -228,10 +248,18 @@ def test_photo_job_records_only_a_complete_mux(monkeypatch, tmp_path):
     class Download:
         def __init__(self, url, parent=None):
             self.url = url
-            self.posts = {}
+            self.pred_post = lambda *_: True
+
+        def _init(self):
+            return None
+
+        def handle_directory(self, _metadata):
+            return None
 
         def run(self):
-            self.posts[metadata["id"]] = metadata
+            self._init()
+            if self.pred_post("", metadata):
+                self.handle_directory(metadata)
             return 0
 
     fake_config = SimpleNamespace(
@@ -252,9 +280,10 @@ def test_photo_job_records_only_a_complete_mux(monkeypatch, tmp_path):
         lambda *_: destination.touch(),
     )
 
-    status = gallery.run_photo_job(job, (), {}, job.url)
+    result = gallery.run_photo_job(job, (), {}, job.url)
 
-    assert status == 0
+    assert result.status == 0
+    assert result.is_photo
     assert destination.exists()
     assert job.gallery_archive_file.read_text() == "123456789\n"
     assert any(path == () and key == "base-directory" for path, key, _ in applied)

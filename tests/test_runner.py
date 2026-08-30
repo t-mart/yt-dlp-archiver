@@ -1,5 +1,6 @@
 from dataclasses import replace
 from pathlib import Path
+from types import SimpleNamespace
 
 from yt_dlp_archiver import runner
 from yt_dlp_archiver.config import parse
@@ -79,6 +80,56 @@ def test_gallery_command_line_uses_gallery_options():
     assert line.startswith("gallery-dl --config-ignore ")
     assert "--cookies-from-browser firefox" in line
     assert line.endswith(job.url)
+
+
+def test_mixed_tiktok_collection_routes_each_entry(monkeypatch, tmp_path):
+    monkeypatch.setenv("XDG_STATE_HOME", str(tmp_path / "state"))
+    collection = "https://www.tiktok.com/@someone/collection/saved-123"
+    photo = "https://www.tiktok.com/@someone/video/111"
+    video = "https://www.tiktok.com/@someone/video/222"
+    config = parse(
+        {"archive-jobs": {"mixed": {"url": collection, "target-dir": str(tmp_path)}}},
+        Path("config.yaml"),
+    )
+    downloads = []
+
+    class YoutubeDL:
+        def __init__(self, options):
+            self.options = options
+
+        def __enter__(self):
+            return self
+
+        def __exit__(self, *_):
+            return None
+
+        def add_post_processor(self, *_args, **_kwargs):
+            return None
+
+        def extract_info(self, url, download):
+            assert url == collection
+            assert download is False
+            assert self.options["download_archive"] is None
+            assert self.options["extract_flat"] is True
+            return {"entries": [{"url": photo}, {"url": video}]}
+
+        def download(self, urls):
+            downloads.extend(urls)
+            return 0
+
+    monkeypatch.setattr(runner, "build_options", lambda _: {})
+    monkeypatch.setattr(runner.yt_dlp, "YoutubeDL", YoutubeDL)
+    gallery_urls = []
+
+    def run_photo(_job, _flags, _options, url, _simulate):
+        gallery_urls.append(url)
+        return SimpleNamespace(status=0, is_photo=url == photo)
+
+    monkeypatch.setattr(runner.gallery, "run_photo_job", run_photo)
+
+    assert runner.run_job(config, config.job("mixed")) == 0
+    assert gallery_urls == [photo, video]
+    assert downloads == [video]
 
 
 def test_media_files_filters_by_suffix(tmp_path):

@@ -5,6 +5,8 @@ sources such as TikTok collections and YouTube channels.
 
 The program embeds [yt-dlp](https://github.com/yt-dlp/yt-dlp) for videos. It
 embeds [gallery-dl](https://github.com/mikf/gallery-dl) for TikTok photo posts.
+TikTok collection entries can use `/video/` URLs for photo posts. The program
+uses gallery-dl metadata to identify each post type.
 Download archives prevent duplicate downloads.
 
 The program can also repair video downloads that have no audio track.

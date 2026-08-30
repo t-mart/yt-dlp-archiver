@@ -31,7 +31,13 @@ AUDIO_SUFFIXES = frozenset({".aac", ".flac", ".m4a", ".mp3", ".ogg", ".opus"})
 @dataclass(frozen=True)
 class Source:
     url: str
-    kind: Literal["photo", "video", "other"]
+    kind: Literal["collection", "photo", "video", "other"]
+
+
+@dataclass(frozen=True)
+class PhotoResult:
+    status: int
+    is_photo: bool
 
 
 def _tiktok_host(url: str) -> str:
@@ -43,7 +49,7 @@ def is_photo_url(url: str) -> bool:
     return bool(_tiktok_host(url) and "/photo/" in urlsplit(url).path)
 
 
-def _kind(url: str) -> Literal["photo", "video", "other"]:
+def _kind(url: str) -> Literal["collection", "photo", "video", "other"]:
     if not _tiktok_host(url):
         return "other"
     path = urlsplit(url).path
@@ -51,6 +57,8 @@ def _kind(url: str) -> Literal["photo", "video", "other"]:
         return "photo"
     if "/video/" in path:
         return "video"
+    if "/collection/" in path:
+        return "collection"
     return "other"
 
 
@@ -132,6 +140,7 @@ def _collector(base: type[Any], archived: set[str]) -> type[Any]:
     class Collector(base):
         def __init__(self, url: Any, parent: Any = None):
             super().__init__(url, parent)
+            self.is_photo = False
             self.posts: dict[str, dict[str, Any]] = {}
 
         def _init(self) -> None:
@@ -140,7 +149,9 @@ def _collector(base: type[Any], archived: set[str]) -> type[Any]:
 
             def select(url: str, metadata: dict[str, Any]) -> bool:
                 post_id = str(metadata.get("id", ""))
-                if metadata.get("post_type") != "image" or post_id in archived:
+                is_image = metadata.get("post_type") == "image"
+                self.is_photo = self.is_photo or is_image
+                if not is_image or post_id in archived:
                     return False
                 return bool(predicate(url, metadata))
 
@@ -334,7 +345,7 @@ def run_photo_job(
     yt_dlp_options: dict[str, Any],
     source_url: str,
     simulate: bool = False,
-) -> int:
+) -> PhotoResult:
     archived = _read_archive(job_config.gallery_archive_file)
 
     with TemporaryDirectory(prefix="yt-dlp-archiver-gallery-") as temp:
@@ -361,7 +372,7 @@ def run_photo_job(
             status = download.run()
 
         if simulate or status:
-            return status
+            return PhotoResult(status, download.is_photo)
 
         for post_id, metadata in download.posts.items():
             try:
@@ -379,4 +390,4 @@ def run_photo_job(
             except (ConfigError, OSError) as error:
                 print(f"[gallery-dl] error: {error}")
                 status |= 1
-        return status
+        return PhotoResult(status, download.is_photo)
