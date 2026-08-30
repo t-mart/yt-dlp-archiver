@@ -31,6 +31,10 @@ def archive_file(job_name: str) -> Path:
     return state_home() / APP_NAME / f"{job_name}.txt"
 
 
+def gallery_archive_file(job_name: str) -> Path:
+    return state_home() / APP_NAME / f"{job_name}.gallery-dl.txt"
+
+
 def systemd_user_dir() -> Path:
     return config_home() / "systemd" / "user"
 

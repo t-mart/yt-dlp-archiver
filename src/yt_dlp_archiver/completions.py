@@ -18,7 +18,9 @@ PROGRAM = "yt-dlp-archiver"
 # built-ins. '$(...)' runs a command and reads 'value<TAB>description' lines.
 VALUE_ACTIONS: dict[str, list[str]] = {
     "job": [f"$({PROGRAM} _complete jobs)"],
-    "options": [f"$({PROGRAM} _complete option-sets)"],
+    "yt-dlp-options": [f"$({PROGRAM} _complete yt-dlp-option-sets)"],
+    "options": [f"$({PROGRAM} _complete yt-dlp-option-sets)"],
+    "gallery-dl-options": [f"$({PROGRAM} _complete gallery-dl-option-sets)"],
     "config": ["$files"],
     "target-dir": ["$directories"],
 }
@@ -58,10 +60,11 @@ def _flags(command: Any) -> tuple[dict[str, str], dict[str, list[str]]]:
         for opt in param.secondary_opts:
             flags[opt] = _negate(description)
         if takes_value:
-            name = param.opts[-1].lstrip("-")
-            action = VALUE_ACTIONS.get(name)
-            if action:
-                completion[name] = list(action)
+            for opt in param.opts:
+                name = opt.lstrip("-")
+                action = VALUE_ACTIONS.get(name)
+                if action:
+                    completion[name] = list(action)
     # Click appends the help option at parse time, so it is not in 'params'.
     flags["--help"] = "Show help and exit."
     return flags, completion

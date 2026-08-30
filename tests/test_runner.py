@@ -1,3 +1,4 @@
+from dataclasses import replace
 from pathlib import Path
 
 from yt_dlp_archiver import runner
@@ -14,11 +15,15 @@ DOCUMENT = {
             "cookies-from-browser": "firefox",
         }
     },
+    "gallery-dl-options": {
+        "firefox": {"cookies-from-browser": "firefox"},
+    },
     "archive-jobs": {
         "demo": {
             "url": "https://example.com/v",
             "target-dir": "/tmp/dl",
-            "options": "firefox",
+            "yt-dlp-options": "firefox",
+            "gallery-dl-options": "firefox",
         }
     },
 }
@@ -68,6 +73,14 @@ def test_command_line_is_shell_quoted():
     assert line.endswith(job.url)
 
 
+def test_gallery_command_line_uses_gallery_options():
+    config, job = _job()
+    line = runner.gallery_command_line(config, job)
+    assert line.startswith("gallery-dl --config-ignore ")
+    assert "--cookies-from-browser firefox" in line
+    assert line.endswith(job.url)
+
+
 def test_media_files_filters_by_suffix(tmp_path):
     (tmp_path / "a.mp4").touch()
     (tmp_path / "b.mkv").touch()
@@ -78,6 +91,26 @@ def test_media_files_filters_by_suffix(tmp_path):
 
 def test_media_files_tolerates_a_missing_directory(tmp_path):
     assert runner.media_files(tmp_path / "absent") == []
+
+
+def test_verify_accepts_a_silent_photo_post(monkeypatch, tmp_path):
+    config, job = _job()
+    job = replace(job, target_dir=tmp_path)
+    slideshow = tmp_path / "photo.mkv"
+    slideshow.touch()
+    monkeypatch.setattr(
+        runner.probe, "probe", lambda _: runner.probe.Streams(0, 1, None)
+    )
+    monkeypatch.setattr(
+        runner.probe,
+        "source_url",
+        lambda _: "https://www.tiktok.com/@someone/photo/123456789",
+    )
+
+    findings = runner.verify(config, job)
+
+    assert len(findings) == 1
+    assert not findings[0].needs_audio
 
 
 def test_jobs_for_all_returns_every_job():

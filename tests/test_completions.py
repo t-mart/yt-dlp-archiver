@@ -53,8 +53,14 @@ def test_negative_flag_gets_a_negated_description():
 def test_job_flag_completes_from_the_config():
     run = _by_name(_spec()["commands"], "run")
     assert run["completion"]["flag"]["job"] == ["$(yt-dlp-archiver _complete jobs)"]
+    assert run["completion"]["flag"]["yt-dlp-options"] == [
+        "$(yt-dlp-archiver _complete yt-dlp-option-sets)"
+    ]
     assert run["completion"]["flag"]["options"] == [
-        "$(yt-dlp-archiver _complete option-sets)"
+        "$(yt-dlp-archiver _complete yt-dlp-option-sets)"
+    ]
+    assert run["completion"]["flag"]["gallery-dl-options"] == [
+        "$(yt-dlp-archiver _complete gallery-dl-option-sets)"
     ]
 
 

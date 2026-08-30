@@ -1,4 +1,4 @@
-"""Configuration loading and yt-dlp flag rendering."""
+"""Configuration loading and downloader flag rendering."""
 
 from __future__ import annotations
 
@@ -24,7 +24,8 @@ class Job:
     name: str
     url: str
     target_dir: Path
-    options: tuple[str, ...]
+    yt_dlp_options: tuple[str, ...]
+    gallery_dl_options: tuple[str, ...]
     timer_oncalendar: str | None
     timer_randomized_delay: str | None
 
@@ -32,10 +33,15 @@ class Job:
     def archive_file(self) -> Path:
         return paths.archive_file(self.name)
 
+    @property
+    def gallery_archive_file(self) -> Path:
+        return paths.gallery_archive_file(self.name)
+
 
 @dataclass(frozen=True)
 class Config:
-    option_sets: Mapping[str, tuple[str, ...]]
+    yt_dlp_option_sets: Mapping[str, tuple[str, ...]]
+    gallery_dl_option_sets: Mapping[str, tuple[str, ...]]
     jobs: Mapping[str, Job]
     source: Path
 
@@ -46,18 +52,42 @@ class Config:
             known = ", ".join(sorted(self.jobs)) or "none"
             raise ConfigError(f"unknown job {name!r}. Known jobs: {known}") from None
 
-    def argv_for(self, job: Job) -> tuple[str, ...]:
-        """Flags from the job's option sets, in declaration order."""
+    def _argv_for(
+        self,
+        job: Job,
+        names: tuple[str, ...],
+        sets: Mapping[str, tuple[str, ...]],
+        section: str,
+    ) -> tuple[str, ...]:
         argv: list[str] = []
-        for set_name in job.options:
+        for set_name in names:
             try:
-                argv.extend(self.option_sets[set_name])
+                argv.extend(sets[set_name])
             except KeyError:
-                known = ", ".join(sorted(self.option_sets)) or "none"
+                known = ", ".join(sorted(sets)) or "none"
                 raise ConfigError(
-                    f"job {job.name!r} wants option set {set_name!r}. Known sets: {known}"
+                    f"job {job.name!r} wants {section} set {set_name!r}. "
+                    f"Known sets: {known}"
                 ) from None
         return tuple(argv)
+
+    def yt_dlp_argv_for(self, job: Job) -> tuple[str, ...]:
+        """Get the yt-dlp flags for a job."""
+        return self._argv_for(
+            job,
+            job.yt_dlp_options,
+            self.yt_dlp_option_sets,
+            "yt-dlp option",
+        )
+
+    def gallery_dl_argv_for(self, job: Job) -> tuple[str, ...]:
+        """Get the gallery-dl flags for a job."""
+        return self._argv_for(
+            job,
+            job.gallery_dl_options,
+            self.gallery_dl_option_sets,
+            "gallery-dl option",
+        )
 
 
 def render_flags(mapping: Mapping[str, Any]) -> tuple[str, ...]:
@@ -77,14 +107,14 @@ def render_flags(mapping: Mapping[str, Any]) -> tuple[str, ...]:
     return tuple(argv)
 
 
-def _as_option_names(value: Any, job_name: str) -> tuple[str, ...]:
+def _as_option_names(value: Any, job_name: str, key: str) -> tuple[str, ...]:
     if value is None:
         return ()
     if isinstance(value, str):
         return (value,)
     if isinstance(value, (list, tuple)):
         return tuple(str(item) for item in value)
-    raise ConfigError(f"job {job_name!r}: 'options' must be a name or a list of names")
+    raise ConfigError(f"job {job_name!r}: {key!r} must be a name or a list of names")
 
 
 def _parse_job(name: str, raw: Any) -> Job:
@@ -94,6 +124,8 @@ def _parse_job(name: str, raw: Any) -> Job:
         )
     if not isinstance(raw, Mapping):
         raise ConfigError(f"job {name!r} must be a mapping")
+    if "options" in raw:
+        raise ConfigError(f"job {name!r}: 'options' was renamed to 'yt-dlp-options'")
     url = raw.get("url")
     if not url:
         raise ConfigError(f"job {name!r} needs a 'url'")
@@ -104,7 +136,12 @@ def _parse_job(name: str, raw: Any) -> Job:
         name=name,
         url=str(url),
         target_dir=paths.expand(target_dir),
-        options=_as_option_names(raw.get("options"), name),
+        yt_dlp_options=_as_option_names(
+            raw.get("yt-dlp-options"), name, "yt-dlp-options"
+        ),
+        gallery_dl_options=_as_option_names(
+            raw.get("gallery-dl-options"), name, "gallery-dl-options"
+        ),
         timer_oncalendar=_opt_str(raw.get("timer-oncalendar")),
         timer_randomized_delay=_opt_str(raw.get("timer-randomized-delay")),
     )
@@ -114,29 +151,42 @@ def _opt_str(value: Any) -> str | None:
     return None if value is None else str(value)
 
 
+def _parse_option_sets(
+    document: Mapping[str, Any], source: Path, section: str
+) -> dict[str, tuple[str, ...]]:
+    raw_sets = document.get(section) or {}
+    if not isinstance(raw_sets, Mapping):
+        raise ConfigError(f"{source}: {section!r} must be a mapping")
+    option_sets: dict[str, tuple[str, ...]] = {}
+    for set_name, flags in raw_sets.items():
+        if flags is None:
+            flags = {}
+        if not isinstance(flags, Mapping):
+            raise ConfigError(f"{source}: {section} set {set_name!r} must be a mapping")
+        option_sets[str(set_name)] = render_flags(flags)
+    return option_sets
+
+
 def parse(document: Any, source: Path) -> Config:
     if document is None:
         document = {}
     if not isinstance(document, Mapping):
         raise ConfigError(f"{source}: top level must be a mapping")
 
-    raw_sets = document.get("yt-dlp-options") or {}
-    if not isinstance(raw_sets, Mapping):
-        raise ConfigError(f"{source}: 'yt-dlp-options' must be a mapping")
-    option_sets = {}
-    for set_name, flags in raw_sets.items():
-        if flags is None:
-            flags = {}
-        if not isinstance(flags, Mapping):
-            raise ConfigError(f"{source}: option set {set_name!r} must be a mapping")
-        option_sets[str(set_name)] = render_flags(flags)
+    yt_dlp_option_sets = _parse_option_sets(document, source, "yt-dlp-options")
+    gallery_dl_option_sets = _parse_option_sets(document, source, "gallery-dl-options")
 
     raw_jobs = document.get("archive-jobs") or {}
     if not isinstance(raw_jobs, Mapping):
         raise ConfigError(f"{source}: 'archive-jobs' must be a mapping")
     jobs = {str(name): _parse_job(str(name), raw) for name, raw in raw_jobs.items()}
 
-    return Config(option_sets=option_sets, jobs=jobs, source=source)
+    return Config(
+        yt_dlp_option_sets=yt_dlp_option_sets,
+        gallery_dl_option_sets=gallery_dl_option_sets,
+        jobs=jobs,
+        source=source,
+    )
 
 
 def load(path: Path | None = None) -> Config:
@@ -147,12 +197,18 @@ def load(path: Path | None = None) -> Config:
     return parse(document, target)
 
 
-def ad_hoc_job(url: str, target_dir: Path, options: Sequence[str]) -> Job:
+def ad_hoc_job(
+    url: str,
+    target_dir: Path,
+    yt_dlp_options: Sequence[str],
+    gallery_dl_options: Sequence[str],
+) -> Job:
     return Job(
         name="ad-hoc",
         url=url,
         target_dir=paths.expand(target_dir),
-        options=tuple(options),
+        yt_dlp_options=tuple(yt_dlp_options),
+        gallery_dl_options=tuple(gallery_dl_options),
         timer_oncalendar=None,
         timer_randomized_delay=None,
     )

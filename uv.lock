@@ -163,6 +163,18 @@ wheels = [
 ]
 
 [[package]]
+name = "gallery-dl"
+version = "1.32.10"
+source = { registry = "https://pypi.org/simple" }
+dependencies = [
+    { name = "requests" },
+]
+sdist = { url = "https://files.pythonhosted.org/packages/b6/21/90e2240a562ff95f4dbcab0541395876e005e23a83d8e44394440472c924/gallery_dl-1.32.10.tar.gz", hash = "sha256:9df27426e0230efe9e05066352f0e2080ef0981baa90790a0851e2e7b973d047", size = 746906, upload-time = "2026-08-29T08:22:05.48Z" }
+wheels = [
+    { url = "https://files.pythonhosted.org/packages/e5/05/3b74d85f6fe1ac8d46733a4723dcca9dd16b0c495606a420d712019f607d/gallery_dl-1.32.10-py3-none-any.whl", hash = "sha256:93736866d0da7aef2d49706c0d58832d4af7f173eca06dedb466dd9f2fdb1a11", size = 929905, upload-time = "2026-08-29T08:22:01.577Z" },
+]
+
+[[package]]
 name = "idna"
 version = "3.18"
 source = { registry = "https://pypi.org/simple" }
@@ -494,6 +506,7 @@ name = "yt-dlp-archiver"
 version = "0.1.0"
 source = { editable = "." }
 dependencies = [
+    { name = "gallery-dl" },
     { name = "pyyaml" },
     { name = "typer" },
     { name = "yt-dlp", extra = ["default"] },
@@ -508,6 +521,7 @@ dev = [
 
 [package.metadata]
 requires-dist = [
+    { name = "gallery-dl", specifier = ">=1.32.9" },
     { name = "pyyaml", specifier = ">=6.0.3" },
     { name = "typer", specifier = ">=0.27.1" },
     { name = "yt-dlp", extras = ["default"], specifier = ">=2026.7.4" },

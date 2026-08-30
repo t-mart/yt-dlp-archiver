@@ -38,27 +38,50 @@ def _document(**job):
     base = {"url": "https://example.com/v", "target-dir": "/tmp/x"}
     return {
         "yt-dlp-options": {"set-a": {"embed-subs": None}},
+        "gallery-dl-options": {"gallery-a": {"cookies-from-browser": "firefox"}},
         "archive-jobs": {"j": {**base, **job}},
     }
 
 
 def test_parse_reads_a_job():
-    config = parse(_document(options="set-a", **{"timer-oncalendar": "daily"}), SOURCE)
+    config = parse(
+        _document(
+            **{
+                "yt-dlp-options": "set-a",
+                "gallery-dl-options": "gallery-a",
+                "timer-oncalendar": "daily",
+            }
+        ),
+        SOURCE,
+    )
     job = config.job("j")
     assert job.url == "https://example.com/v"
     assert job.target_dir == Path("/tmp/x")
-    assert job.options == ("set-a",)
+    assert job.yt_dlp_options == ("set-a",)
+    assert job.gallery_dl_options == ("gallery-a",)
     assert job.timer_oncalendar == "daily"
 
 
 def test_options_accepts_a_list():
-    config = parse(_document(options=["set-a", "set-a"]), SOURCE)
-    assert config.argv_for(config.job("j")) == ("--embed-subs", "--embed-subs")
+    config = parse(_document(**{"yt-dlp-options": ["set-a", "set-a"]}), SOURCE)
+    assert config.yt_dlp_argv_for(config.job("j")) == (
+        "--embed-subs",
+        "--embed-subs",
+    )
 
 
 def test_options_may_be_absent():
     config = parse(_document(), SOURCE)
-    assert config.argv_for(config.job("j")) == ()
+    assert config.yt_dlp_argv_for(config.job("j")) == ()
+    assert config.gallery_dl_argv_for(config.job("j")) == ()
+
+
+def test_gallery_options_render_as_flags():
+    config = parse(_document(**{"gallery-dl-options": "gallery-a"}), SOURCE)
+    assert config.gallery_dl_argv_for(config.job("j")) == (
+        "--cookies-from-browser",
+        "firefox",
+    )
 
 
 def test_target_dir_expands_home(monkeypatch, tmp_path):
@@ -74,9 +97,14 @@ def test_unknown_job_names_the_known_ones():
 
 
 def test_unknown_option_set_is_reported():
-    config = parse(_document(options="missing"), SOURCE)
+    config = parse(_document(**{"yt-dlp-options": "missing"}), SOURCE)
     with pytest.raises(ConfigError, match="Known sets: set-a"):
-        config.argv_for(config.job("j"))
+        config.yt_dlp_argv_for(config.job("j"))
+
+
+def test_old_job_options_key_names_its_replacement():
+    with pytest.raises(ConfigError, match="renamed to 'yt-dlp-options'"):
+        parse(_document(options="set-a"), SOURCE)
 
 
 @pytest.mark.parametrize("name", ["has space", "slash/name", "at@sign", ""])

@@ -10,7 +10,7 @@ from typing import Any
 
 import yt_dlp
 
-from . import probe
+from . import gallery, probe
 from .config import Config, Job
 from .repair import AudioRepairPP, fetch_formats, repair_file
 
@@ -19,7 +19,7 @@ def build_argv(
     config: Config, job: Job, extra: Sequence[str] = (), simulate: bool = False
 ) -> list[str]:
     """Command line for the job. '--ignore-config' keeps the run reproducible."""
-    argv = ["--ignore-config", *config.argv_for(job)]
+    argv = ["--ignore-config", *config.yt_dlp_argv_for(job)]
     argv += ["--paths", f"home:{job.target_dir}"]
     argv += ["--download-archive", str(job.archive_file)]
     if simulate:
@@ -43,6 +43,10 @@ def command_line(config: Config, job: Job, simulate: bool = False) -> str:
     return " ".join(shlex.quote(part) for part in ["yt-dlp", *argv, job.url])
 
 
+def gallery_command_line(config: Config, job: Job) -> str:
+    return gallery.command_line(config.gallery_dl_argv_for(job), job.url)
+
+
 def _prepare(job: Job) -> None:
     job.target_dir.mkdir(parents=True, exist_ok=True)
     job.archive_file.parent.mkdir(parents=True, exist_ok=True)
@@ -53,9 +57,18 @@ def run_job(
 ) -> int:
     _prepare(job)
     options = build_options(build_argv(config, job, extra=extra, simulate=simulate))
+    source = gallery.resolve_source(job.url)
+    if source.kind == "photo":
+        return gallery.run_photo_job(
+            job,
+            config.gallery_dl_argv_for(job),
+            options,
+            source.url,
+            simulate,
+        )
     with yt_dlp.YoutubeDL(options) as ydl:
         ydl.add_post_processor(AudioRepairPP(), when="post_process")
-        return ydl.download([job.url])
+        return ydl.download([source.url])
 
 
 @dataclass(frozen=True)
@@ -64,6 +77,11 @@ class Finding:
     has_audio: bool
     repaired: bool = False
     detail: str = ""
+    audio_required: bool = True
+
+    @property
+    def needs_audio(self) -> bool:
+        return self.audio_required and not self.has_audio
 
 
 def media_files(directory: Path) -> list[Path]:
@@ -95,11 +113,22 @@ def verify(
         if streams.has_audio:
             findings.append(Finding(path, True))
             continue
+        source_url = probe.source_url(path)
+        if source_url and gallery.is_photo_url(source_url):
+            findings.append(
+                Finding(
+                    path,
+                    False,
+                    detail="audio is optional for a photo slideshow",
+                    audio_required=False,
+                )
+            )
+            continue
         if not do_repair:
             findings.append(Finding(path, False, detail="no audio track"))
             continue
 
-        url = probe.source_url(path)
+        url = source_url
         if not url:
             findings.append(Finding(path, False, detail="no source URL in metadata"))
             continue

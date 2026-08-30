@@ -13,7 +13,7 @@ from . import paths, runner, units
 from .config import Config, ConfigError, Job
 
 app = typer.Typer(
-    help="Archive remote video sources on a schedule, with a guaranteed audio track.",
+    help="Archive remote media sources on a schedule.",
     no_args_is_help=True,
     add_completion=False,
 )
@@ -72,8 +72,19 @@ def run(
     target_dir: Annotated[
         Path | None, typer.Option("--target-dir", help="Ad-hoc download directory.")
     ] = None,
-    options: Annotated[
-        str | None, typer.Option("--options", help="Option set name for an ad-hoc run.")
+    yt_dlp_options: Annotated[
+        str | None,
+        typer.Option(
+            "--yt-dlp-options",
+            "--options",
+            help="yt-dlp option set for an ad-hoc run.",
+        ),
+    ] = None,
+    gallery_dl_options: Annotated[
+        str | None,
+        typer.Option(
+            "--gallery-dl-options", help="gallery-dl option set for an ad-hoc run."
+        ),
     ] = None,
     dry_run: Annotated[
         bool, typer.Option("--dry-run", help="Simulate. Download nothing.")
@@ -86,9 +97,16 @@ def run(
         cfg = (
             _load(config)
             if config or paths.config_file().exists()
-            else Config({}, {}, Path("-"))
+            else Config({}, {}, {}, Path("-"))
         )
-        jobs = [config_module.ad_hoc_job(url, target_dir, [options] if options else [])]
+        jobs = [
+            config_module.ad_hoc_job(
+                url,
+                target_dir,
+                [yt_dlp_options] if yt_dlp_options else [],
+                [gallery_dl_options] if gallery_dl_options else [],
+            )
+        ]
     else:
         cfg = _load(config)
         jobs = _select(cfg, job, all_jobs)
@@ -127,7 +145,7 @@ def verify(
             findings = runner.verify(cfg, item, do_repair=repair, log=_echo)
         except ConfigError as error:
             raise _fail(str(error)) from None
-        silent = [f for f in findings if not f.has_audio]
+        silent = [f for f in findings if f.needs_audio]
         fixed = [f for f in findings if f.repaired]
         for finding in silent:
             typer.secho(
@@ -162,7 +180,7 @@ def show(
     config: ConfigOption = None,
     job: JobOption = None,
 ) -> None:
-    """Show the resolved settings and the equivalent yt-dlp command."""
+    """Show the resolved job and downloader commands."""
     cfg = _load(config)
     if not job:
         raise _fail("give --job <name>")
@@ -173,12 +191,15 @@ def show(
     _echo(f"job        {item.name}")
     _echo(f"url        {item.url}")
     _echo(f"target-dir {item.target_dir}")
-    _echo(f"archive    {item.archive_file}")
-    _echo(f"options    {', '.join(item.options) or 'none'}")
+    _echo(f"yt-archive {item.archive_file}")
+    _echo(f"gdl-archive {item.gallery_archive_file}")
+    _echo(f"yt-options {', '.join(item.yt_dlp_options) or 'none'}")
+    _echo(f"gdl-options {', '.join(item.gallery_dl_options) or 'none'}")
     _echo(f"schedule   {item.timer_oncalendar or 'no timer'}")
     _echo(f"service    {units.instance_name(item.name, 'service')}")
     _echo("")
     _echo(runner.command_line(cfg, item))
+    _echo(runner.gallery_command_line(cfg, item))
 
 
 @completions_app.command("carapace")
@@ -189,7 +210,12 @@ def completions_carapace() -> None:
 
 @app.command("_complete", hidden=True)
 def complete_values(
-    what: Annotated[str, typer.Argument(help="Candidate set: jobs or option-sets.")],
+    what: Annotated[
+        str,
+        typer.Argument(
+            help="Candidate set: jobs, yt-dlp-option-sets, or gallery-dl-option-sets."
+        ),
+    ],
     config: ConfigOption = None,
 ) -> None:
     """Print completion candidates as 'value<TAB>description' lines."""
@@ -201,8 +227,11 @@ def complete_values(
     if what == "jobs":
         for item in cfg.jobs.values():
             typer.echo(f"{item.name}\t{item.target_dir}")
-    elif what == "option-sets":
-        for name in cfg.option_sets:
+    elif what == "yt-dlp-option-sets":
+        for name in cfg.yt_dlp_option_sets:
+            typer.echo(name)
+    elif what == "gallery-dl-option-sets":
+        for name in cfg.gallery_dl_option_sets:
             typer.echo(name)
 
 

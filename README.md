@@ -1,15 +1,13 @@
 # yt-dlp-archiver
 
-Download remote video collections into local directories. Helpful for archiving
-sources that update frequently: TikTok collections, YouTube channels/playlists,
-etc. Most helpful when run on a schedule, such as on a systemd timer, which this
-program can install for you.
+Download remote media collections into local directories. This program supports
+sources such as TikTok collections and YouTube channels.
 
-Uses embedded [yt-dlp](https://github.com/yt-dlp/yt-dlp) with it's
-`--download-archive` flag to only download new items.
+The program embeds [yt-dlp](https://github.com/yt-dlp/yt-dlp) for videos. It
+embeds [gallery-dl](https://github.com/mikf/gallery-dl) for TikTok photo posts.
+Download archives prevent duplicate downloads.
 
-To fix a TikTok bug, this program also identifies and fixes downloads that have
-no audio track repairs them in place.
+The program can also repair video downloads that have no audio track.
 
 ## Install
 
@@ -39,17 +37,22 @@ yt-dlp-options:
     remote-components: "ejs:github"
     cookies-from-browser: "firefox"
 
+gallery-dl-options:
+  firefox:
+    cookies-from-browser: "firefox"
+
 archive-jobs:
   some-collection: # a name for the job
-    url: <some video collection URL> # what to download
+    url: <some media URL> # what to download
     target-dir: ~/desktop # where to put the downloaded files
-    options: firefox # reference the options defined above
+    yt-dlp-options: firefox # reference a yt-dlp option set
+    gallery-dl-options: firefox # reference a gallery-dl option set
     timer-oncalendar: "*-*-* 01:00:00" # accepts any systemd OnCalendar value
     timer-randomized-delay: 30m # accepts any systemd RandomizedDelaySec value
 ```
 
-`yt-dlp-options` maps a set name to yt-dlp command line flags. Drop the `--`
-prefix. Every yt-dlp flag works, so the yt-dlp documentation applies directly.
+`yt-dlp-options` and `gallery-dl-options` map set names to command-line flags.
+Drop the `--` prefix from each flag.
 
 | YAML value    | Command line      |
 | ------------- | ----------------- |
@@ -59,12 +62,29 @@ prefix. Every yt-dlp flag works, so the yt-dlp documentation applies directly.
 | `key: false`  | `--no-key`        |
 | `key: [a, b]` | `--key a --key b` |
 
-A job's `options` takes one set name or a list of set names. Later names win.
+Each job option key accepts one set name or a list of names. Later names win.
+
+Change each old job `options` key to `yt-dlp-options`.
 
 Job names accept letters, digits, `.`, `_` and `-`. The name becomes the systemd
 instance name.
 
-The host `~/.config/yt-dlp/config` file is ignored, so a run is reproducible.
+The program ignores the host yt-dlp and gallery-dl config files.
+
+The program controls gallery-dl output paths, filenames, archives, and TikTok
+media selection. Configured values for these options have no effect.
+
+### TikTok photo posts
+
+The program follows TikTok short-link redirects before it selects a downloader.
+It sends `/video/` URLs to yt-dlp and `/photo/` URLs to gallery-dl.
+
+Each photo post becomes one Matroska file. The video stream contains the original
+JPEG data without a lossy conversion. Each image appears for five seconds and
+has a chapter. The optional audio track repeats until the slideshow ends.
+
+The final filename uses the yt-dlp output template. The default name contains
+the TikTok title, tags, and post ID.
 
 ## Use
 
@@ -73,16 +93,18 @@ yt-dlp-archiver list                                  # list all jobs
 yt-dlp-archiver run --job some-collection             # run a job
 yt-dlp-archiver run --all                             # run all jobs
 yt-dlp-archiver run --job some-collection --dry-run   # show what would be downloaded
-yt-dlp-archiver show --job some-collection            # show equivalent yt-dlp command
+yt-dlp-archiver show --job some-collection            # show downloader commands
 ```
 
 Run an ad-hoc URL without a job from a config file:
 
 ```nushell
-yt-dlp-archiver run --url https://example.com/video --target-dir ~/desktop --options firefox
+yt-dlp-archiver run --url https://example.com/video --target-dir ~/desktop --yt-dlp-options firefox
 ```
 
-`show` prints the resolved settings and the equivalent `yt-dlp` command line.
+Add `--gallery-dl-options firefox` to select a gallery-dl option set.
+
+`show` prints the resolved settings and both downloader command lines.
 
 ## Verify and repair
 
@@ -94,8 +116,8 @@ yt-dlp-archiver verify --job some-collection
 yt-dlp-archiver verify --job some-collection --repair
 ```
 
-`verify` probes every media file in the target directory and reports the files
-with no audio track. It exits non-zero when it finds one.
+`verify` probes every media file in the target directory. It reports video files
+that have no audio track. Silent TikTok photo posts are valid.
 
 `verify --repair` fixes them in place. It reads the source URL from the embedded
 metadata, downloads only an audio-bearing format, then muxes. The existing video
@@ -154,12 +176,13 @@ Then open a new shell to take effect.
 
 ## Paths
 
-| Purpose          | Path                                                   |
-| ---------------- | ------------------------------------------------------ |
-| Config           | `$XDG_CONFIG_HOME/yt-dlp-archiver/config.yaml`         |
-| Download archive | `$XDG_STATE_HOME/yt-dlp-archiver/<job-name>.txt`       |
-| systemd units    | `$XDG_CONFIG_HOME/systemd/user`                        |
-| Completion spec  | `$XDG_CONFIG_HOME/carapace/specs/yt-dlp-archiver.yaml` |
+| Purpose            | Path                                                       |
+| ------------------ | ---------------------------------------------------------- |
+| Config             | `$XDG_CONFIG_HOME/yt-dlp-archiver/config.yaml`             |
+| yt-dlp archive     | `$XDG_STATE_HOME/yt-dlp-archiver/<job-name>.txt`           |
+| gallery-dl archive | `$XDG_STATE_HOME/yt-dlp-archiver/<job-name>.gallery-dl.txt` |
+| systemd units      | `$XDG_CONFIG_HOME/systemd/user`                            |
+| Completion spec    | `$XDG_CONFIG_HOME/carapace/specs/yt-dlp-archiver.yaml`     |
 
 ## Develop
 
