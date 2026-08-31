@@ -36,7 +36,7 @@ ATTACHMENT_MIME_TYPES = {
     ".opus": "audio/ogg",
 }
 SLIDESHOW_COMMENT = (
-    "The H.264 video and optional AAC audio tracks provide playback. "
+    "The H.264 video and optional audio tracks provide playback. "
     "Original media files are Matroska attachments."
 )
 
@@ -363,7 +363,8 @@ def mux_slideshow(
         audio_input = len(images)
         if audio:
             argv.extend(("-stream_loop", "-1", "-i", str(playback_audio)))
-        metadata_input = len(images) + bool(audio)
+            argv.extend(("-i", str(audio)))
+        metadata_input = len(images) + 2 if audio else len(images)
         argv.extend(("-f", "ffmetadata", "-i", str(chapters)))
         video_filters = []
         video_inputs = []
@@ -379,9 +380,15 @@ def mux_slideshow(
         video_filters.append(
             f"{''.join(video_inputs)}concat=n={len(images)}:v=1:a=0[video]"
         )
+        if audio:
+            duration = len(images) * SLIDE_SECONDS
+            video_filters.append(
+                f"[{audio_input}:a:0]atrim=duration={duration},"
+                "asetpts=N/SR/TB[playback]"
+            )
         argv.extend(("-filter_complex", ";".join(video_filters), "-map", "[video]"))
         if audio:
-            argv.extend(("-map", f"{audio_input}:a:0"))
+            argv.extend(("-map", "[playback]", "-map", f"{audio_input + 1}:a:0"))
         argv.extend(
             (
                 "-map_metadata",
@@ -413,17 +420,26 @@ def mux_slideshow(
         if audio:
             argv.extend(
                 (
-                    "-c:a",
+                    "-c:a:0",
                     "aac",
-                    "-b:a",
+                    "-b:a:0",
                     "192k",
-                    "-ar",
+                    "-ar:a:0",
                     "48000",
+                    "-c:a:1",
+                    "copy",
+                    "-bsf:a:1",
+                    "setts=pts=PTS-STARTPTS:dts=DTS-STARTDTS",
+                    "-metadata:s:a:0",
+                    "title=Slideshow audio (looped)",
+                    "-metadata:s:a:1",
+                    "title=Original audio",
                     "-disposition:a:0",
                     "default",
+                    "-disposition:a:1",
+                    "0",
                 )
             )
-        argv.extend(("-t", str(len(images) * SLIDE_SECONDS)))
         for index, image in enumerate(images):
             _attach(argv, image, index, "image/jpeg")
         if audio:
@@ -441,7 +457,8 @@ def mux_slideshow(
             streams = probe.probe(staged)
         except probe.MediaError as error:
             raise ConfigError(str(error)) from error
-        if streams.video != 1 or (audio and not streams.has_audio):
+        expected_audio = 2 if audio else 0
+        if streams.video != 1 or streams.audio != expected_audio:
             raise ConfigError("ffmpeg created an incomplete slideshow")
         os.replace(staged, destination)
 

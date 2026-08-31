@@ -43,8 +43,12 @@ def _collection_urls(options: dict[str, Any], url: str) -> list[str]:
         "download_archive": None,
         "extract_flat": True,
         "lazy_playlist": False,
+        "noprogress": True,
+        "postprocessors": [],
+        "quiet": True,
         "simulate": True,
         "skip_download": True,
+        "verbose": False,
     }
     try:
         with yt_dlp.YoutubeDL(lookup) as ydl:
@@ -116,6 +120,7 @@ def run_collection(
     *,
     use_cache: bool,
     simulate: bool = False,
+    verbose: bool = False,
     log: Callable[[str], None] = print,
 ) -> int:
     if not simulate:
@@ -134,9 +139,12 @@ def run_collection(
     cached_count = len(cached & set(urls))
     log(f"Items: {len(urls)} total, {cached_count} cached, {len(pending)} new")
 
+    if verbose:
+        for index, url in enumerate(urls, start=1):
+            log(f"Item {index}/{len(urls)}: {url}")
+
     status = 0
-    for index, url in enumerate(pending, start=1):
-        log(f"Item {index}/{len(pending)}: {url}")
+    for url in pending:
         result = _download_item(config, options, url, simulate)
         status |= result
         if result == 0 and use_cache and not simulate:

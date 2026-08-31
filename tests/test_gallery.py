@@ -55,6 +55,31 @@ def _metadata() -> dict[str, str]:
     }
 
 
+def _stream_duration(path: Path, stream: int) -> float:
+    details = subprocess.run(
+        [
+            "ffprobe",
+            "-v",
+            "error",
+            "-select_streams",
+            f"a:{stream}",
+            "-show_packets",
+            "-show_entries",
+            "packet=pts_time,duration_time",
+            "-of",
+            "json",
+            str(path),
+        ],
+        check=True,
+        capture_output=True,
+        text=True,
+    )
+    packets = json.loads(details.stdout)["packets"]
+    return max(
+        float(packet["pts_time"]) + float(packet["duration_time"]) for packet in packets
+    )
+
+
 def test_explicit_photo_url_needs_no_request():
     def fail(_: str) -> str:
         raise AssertionError("the resolver must not run")
@@ -119,7 +144,7 @@ def test_mux_creates_a_standard_slideshow_with_original_media(
 
     streams = probe.probe(destination)
     assert streams.video == 1
-    assert streams.has_audio
+    assert streams.audio == 2
 
     details = subprocess.run(
         [
@@ -142,9 +167,10 @@ def test_mux_creates_a_standard_slideshow_with_original_media(
     video = next(
         stream for stream in data["streams"] if stream["codec_type"] == "video"
     )
-    playback_audio = next(
+    audio_streams = [
         stream for stream in data["streams"] if stream["codec_type"] == "audio"
-    )
+    ]
+    playback_audio, original_audio = audio_streams
     attached_images = [
         stream
         for stream in data["streams"]
@@ -158,6 +184,11 @@ def test_mux_creates_a_standard_slideshow_with_original_media(
     assert video["avg_frame_rate"] == "30/1"
     assert int(video["nb_read_packets"]) == 300
     assert playback_audio["codec_name"] == "aac"
+    assert playback_audio["disposition"]["default"] == 1
+    assert playback_audio["tags"]["title"] == "Slideshow audio (looped)"
+    assert original_audio["codec_name"] == "mp3"
+    assert original_audio["disposition"]["default"] == 0
+    assert original_audio["tags"]["title"] == "Original audio"
     assert [stream["tags"]["filename"] for stream in attached_images] == [
         "01.jpg",
         "02.jpg",
@@ -254,6 +285,30 @@ def test_mux_creates_a_standard_slideshow_with_original_media(
         text=True,
     )
     assert "silence_duration" not in silence.stderr
+
+
+def test_mux_keeps_audio_that_is_longer_than_the_slideshow(slideshow_sources, tmp_path):
+    images, _ = slideshow_sources
+    audio = tmp_path / "long.mp3"
+    destination = tmp_path / "long.mkv"
+    _ffmpeg(
+        "-f",
+        "lavfi",
+        "-i",
+        "sine=frequency=440:sample_rate=48000:duration=12",
+        str(audio),
+    )
+
+    gallery.mux_slideshow(
+        images,
+        audio,
+        destination,
+        _metadata(),
+        "https://www.tiktok.com/@someone/photo/123456789",
+    )
+
+    assert _stream_duration(destination, 0) == pytest.approx(10, abs=0.1)
+    assert _stream_duration(destination, 1) == pytest.approx(12, abs=0.1)
 
 
 def test_mux_accepts_a_photo_post_without_audio(slideshow_sources, tmp_path):

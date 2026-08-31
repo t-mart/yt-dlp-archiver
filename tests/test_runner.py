@@ -84,6 +84,10 @@ def test_collection_urls_prefers_webpage_urls_and_removes_duplicates(monkeypatch
         def __init__(self, options):
             assert options["extract_flat"] is True
             assert options["skip_download"] is True
+            assert options["quiet"] is True
+            assert options["noprogress"] is True
+            assert options["verbose"] is False
+            assert options["postprocessors"] == []
 
         def __enter__(self):
             return self
@@ -104,6 +108,42 @@ def test_collection_urls_prefers_webpage_urls_and_removes_duplicates(monkeypatch
 
     monkeypatch.setattr(runner.yt_dlp, "YoutubeDL", YoutubeDL)
     assert runner._collection_urls({}, "collection") == ["page", "fallback"]
+
+
+def test_run_prints_item_urls_only_in_verbose_mode(monkeypatch, tmp_path):
+    monkeypatch.setenv("XDG_STATE_HOME", str(tmp_path / "state"))
+    config, collection = _collection()
+    collection = replace(collection, target_dir=tmp_path / "downloads")
+    urls = ["https://example.com/1", "https://example.com/2"]
+    collection.cache_file.parent.mkdir(parents=True)
+    collection.cache_file.write_text(f"{urls[0]}\n", encoding="utf-8")
+    monkeypatch.setattr(runner, "build_options", lambda _argv: {})
+    monkeypatch.setattr(runner, "_collection_urls", lambda _options, _url: urls)
+    monkeypatch.setattr(runner, "_download_item", lambda *_args: 0)
+    normal_log = []
+    verbose_log = []
+
+    runner.run_collection(
+        config,
+        collection,
+        use_cache=True,
+        simulate=True,
+        log=normal_log.append,
+    )
+    runner.run_collection(
+        config,
+        collection,
+        use_cache=True,
+        simulate=True,
+        verbose=True,
+        log=verbose_log.append,
+    )
+
+    assert not any(url in message for url in urls for message in normal_log)
+    assert verbose_log[-2:] == [
+        "Item 1/2: https://example.com/1",
+        "Item 2/2: https://example.com/2",
+    ]
 
 
 def test_single_item_input_becomes_one_item(monkeypatch):

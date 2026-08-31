@@ -100,7 +100,11 @@ def _show_configuration(
 
 
 def _run(
-    config: Config, collection: Collection, use_cache: bool, dry_run: bool
+    config: Config,
+    collection: Collection,
+    use_cache: bool,
+    dry_run: bool,
+    verbose: bool,
 ) -> None:
     _show_configuration(config, collection, use_cache=use_cache)
     try:
@@ -109,6 +113,7 @@ def _run(
             collection,
             use_cache=use_cache,
             simulate=dry_run,
+            verbose=verbose,
             log=_echo,
         )
     except ConfigError as error:
@@ -124,10 +129,13 @@ def run(
     dry_run: Annotated[
         bool, typer.Option("--dry-run", "-n", help="Show work without downloads.")
     ] = False,
+    verbose: Annotated[
+        bool, typer.Option("--verbose", help="Print every collection item URL.")
+    ] = False,
 ) -> None:
     """Download new items from a configured collection."""
     config = _load(config_file)
-    _run(config, _collection(config, collection_name), True, dry_run)
+    _run(config, _collection(config, collection_name), True, dry_run, verbose)
 
 
 @app.command()
@@ -140,11 +148,14 @@ def oneshot(
     dry_run: Annotated[
         bool, typer.Option("--dry-run", "-n", help="Show work without downloads.")
     ] = False,
+    verbose: Annotated[
+        bool, typer.Option("--verbose", help="Print every collection item URL.")
+    ] = False,
 ) -> None:
     """Download a collection without a cache or systemd units."""
     config = _load(config_file)
     collection = config_module.oneshot_collection(collection_url, target_dir)
-    _run(config, collection, False, dry_run)
+    _run(config, collection, False, dry_run, verbose)
 
 
 @completions_app.command("carapace")

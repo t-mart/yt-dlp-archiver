@@ -55,6 +55,8 @@ vca run tiktok-watch-on-desktop
 
 The command prints the resolved configuration before it contacts the collection. Use `--dry-run` or `-n` to prevent downloads.
 
+Use `--verbose` to print each collection item URL.
+
 The command performs these operations:
 
 1. Get all collection item URLs with yt-dlp.
@@ -88,7 +90,9 @@ The photo-post path uses the same yt-dlp filename formatter. Each photo post bec
 
 The slideshow contains one 30 fps H.264 video stream. Each image appears for five seconds and starts at a keyframe.
 
-The optional AAC audio track repeats until the slideshow ends. The file also contains the original images and audio as attachments.
+The file has two audio tracks when a photo post contains audio. The default AAC track repeats until the slideshow ends.
+
+The second track contains one uncut copy of the original audio stream. The file also contains the original images and audio as attachments.
 
 ## systemd
 

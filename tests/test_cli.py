@@ -34,7 +34,9 @@ def test_run_uses_a_collection_argument_and_prints_configuration(monkeypatch, tm
         return 0
 
     monkeypatch.setattr(cli.runner, "run_collection", run_collection)
-    result = runner.invoke(cli.app, ["run", "demo", "--config", str(config)])
+    result = runner.invoke(
+        cli.app, ["run", "demo", "--verbose", "--config", str(config)]
+    )
 
     assert result.exit_code == 0
     assert "Configuration:" in result.stdout
@@ -43,7 +45,12 @@ def test_run_uses_a_collection_argument_and_prints_configuration(monkeypatch, tm
     assert calls == [
         (
             "demo",
-            {"use_cache": True, "simulate": False, "log": cli._echo},
+            {
+                "use_cache": True,
+                "simulate": False,
+                "verbose": True,
+                "log": cli._echo,
+            },
         )
     ]
 
