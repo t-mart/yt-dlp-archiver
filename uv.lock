@@ -502,7 +502,7 @@ default = [
 ]
 
 [[package]]
-name = "yt-dlp-archiver"
+name = "video-collection-archiver"
 version = "0.1.0"
 source = { editable = "." }
 dependencies = [

@@ -12,17 +12,16 @@ from typing import Any
 import typer
 import yaml
 
-PROGRAM = "yt-dlp-archiver"
+PROGRAM = "vca"
 
 # Flag name to carapace action. '$files' and '$directories' are carapace
 # built-ins. '$(...)' runs a command and reads 'value<TAB>description' lines.
 VALUE_ACTIONS: dict[str, list[str]] = {
-    "job": [f"$({PROGRAM} _complete jobs)"],
-    "yt-dlp-options": [f"$({PROGRAM} _complete yt-dlp-option-sets)"],
-    "options": [f"$({PROGRAM} _complete yt-dlp-option-sets)"],
-    "gallery-dl-options": [f"$({PROGRAM} _complete gallery-dl-option-sets)"],
     "config": ["$files"],
     "target-dir": ["$directories"],
+}
+POSITIONAL_ACTIONS: dict[str, list[str]] = {
+    "collection_name": [f"$({PROGRAM} _complete collections)"],
 }
 
 
@@ -66,6 +65,7 @@ def _flags(command: Any) -> tuple[dict[str, str], dict[str, list[str]]]:
                 if action:
                     completion[name] = list(action)
     # Click appends the help option at parse time, so it is not in 'params'.
+    flags["-h"] = "Show help and exit."
     flags["--help"] = "Show help and exit."
     return flags, completion
 
@@ -79,8 +79,19 @@ def _command_spec(name: str, command: Any) -> dict[str, Any]:
     flags, flag_completion = _flags(command)
     if flags:
         spec["flags"] = flags
+
+    positional = []
+    for param in command.params:
+        if getattr(param, "hidden", False) or param.param_type_name != "argument":
+            continue
+        positional.append(POSITIONAL_ACTIONS.get(param.name, []))
+    completion: dict[str, Any] = {}
+    if any(positional):
+        completion["positional"] = positional
     if flag_completion:
-        spec["completion"] = {"flag": flag_completion}
+        completion["flag"] = flag_completion
+    if completion:
+        spec["completion"] = completion
 
     children = getattr(command, "commands", None) or {}
     subcommands = [

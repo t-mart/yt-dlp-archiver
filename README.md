@@ -1,201 +1,151 @@
-# yt-dlp-archiver
+# video-collection-archiver
 
-Download remote media collections into local directories. This program supports
-sources such as TikTok collections and YouTube channels.
+video-collection-archiver downloads all items from a media collection. The `vca` command uses yt-dlp and gallery-dl.
 
-The program embeds [yt-dlp](https://github.com/yt-dlp/yt-dlp) for videos. It
-embeds [gallery-dl](https://github.com/mikf/gallery-dl) for TikTok photo posts.
-TikTok collection entries can use `/video/` URLs for photo posts. The program
-uses gallery-dl metadata to identify each post type.
-Download archives prevent duplicate downloads.
+The program targets TikTok collections. It converts each TikTok photo post into a Matroska slideshow.
 
-The program can also repair video downloads that have no audio track.
+## Requirements
+
+- Python 3.14 or later
+- `ffmpeg` and `ffprobe` on `PATH`
 
 ## Install
 
-```nushell
+```sh
 uv tool install git+https://github.com/t-mart/yt-dlp-archiver.git
 ```
 
-`ffmpeg` and `ffprobe` must be on `PATH`.
-
 ## Configure
 
-Since this program is designed to be run repeatedly on the same set of URLs, it
-uses a YAML config file to define jobs.
-
-Create a file at `~/.config/yt-dlp-archiver/config.yaml` and define your options
-and jobs. Example:
+Create `$XDG_CONFIG_HOME/video-collection-archiver/config.yaml`. The default value of `$XDG_CONFIG_HOME` is `~/.config`.
 
 ```yaml
 yt-dlp-options:
-  firefox: # a name for the options
-    # example options, see below for syntax
-    sub-langs: "en.*"
-    sponsorblock-mark: "all"
-    embed-subs:
-    embed-thumbnail:
-    embed-metadata:
-    remote-components: "ejs:github"
-    cookies-from-browser: "firefox"
+  embed-subs:
+  embed-thumbnail:
+  embed-metadata:
+  cookies-from-browser: firefox
 
 gallery-dl-options:
-  firefox:
-    cookies-from-browser: "firefox"
+  cookies-from-browser: firefox
 
-archive-jobs:
-  some-collection: # a name for the job
-    url: <some media URL> # what to download
-    target-dir: ~/desktop # where to put the downloaded files
-    yt-dlp-options: firefox # reference a yt-dlp option set
-    gallery-dl-options: firefox # reference a gallery-dl option set
-    timer-oncalendar: "*-*-* 01:00:00" # accepts any systemd OnCalendar value
-    timer-randomized-delay: 30m # accepts any systemd RandomizedDelaySec value
+collections:
+  tiktok-watch-on-desktop:
+    url: "https://www.tiktok.com/@name/collection/example-123"
+    target-dir: "~/Downloads/tiktok-watch-on-desktop"
 ```
 
-`yt-dlp-options` and `gallery-dl-options` map set names to command-line flags.
-Drop the `--` prefix from each flag.
+Each downloader has one global option mapping. Omit the `--` prefix from each option name.
 
-| YAML value    | Command line      |
-| ------------- | ----------------- |
-| `key:`        | `--key`           |
-| `key: value`  | `--key value`     |
-| `key: true`   | `--key`           |
-| `key: false`  | `--no-key`        |
-| `key: [a, b]` | `--key a --key b` |
+| YAML value    | Command-line arguments |
+| ------------- | ---------------------- |
+| `key:`        | `--key`                |
+| `key: value`  | `--key value`          |
+| `key: true`   | `--key`                |
+| `key: false`  | `--no-key`             |
+| `key: [a, b]` | `--key a --key b`      |
 
-Each job option key accepts one set name or a list of names. Later names win.
+The program ignores the host configuration files for yt-dlp and gallery-dl.
 
-Change each old job `options` key to `yt-dlp-options`.
+## Download a configured collection
 
-Job names accept letters, digits, `.`, `_` and `-`. The name becomes the systemd
-instance name.
-
-The program ignores the host yt-dlp and gallery-dl config files.
-
-The program controls gallery-dl output paths, filenames, archives, and TikTok
-media selection. Configured values for these options have no effect.
-
-### TikTok photo posts
-
-The program follows TikTok short-link redirects before it selects a downloader.
-It sends `/video/` URLs to yt-dlp and `/photo/` URLs to gallery-dl.
-
-Each photo post becomes one Matroska file. A 30 fps H.264 video stream shows
-each image for five seconds. Each image has a chapter and a keyframe. The
-optional AAC audio track repeats until the slideshow ends. The program removes
-edge silence from the playback copy before it repeats the audio.
-
-The file attaches every original JPEG and the original audio file without
-modification. The `COMMENT` tag describes this layout. The `SOURCE_URL` tag
-contains the TikTok URL.
-
-The final filename uses the yt-dlp output template. The default name contains
-the TikTok title, tags, and post ID.
-
-## Use
-
-```nushell
-yt-dlp-archiver list                                  # list all jobs
-yt-dlp-archiver run --job some-collection             # run a job
-yt-dlp-archiver run --all                             # run all jobs
-yt-dlp-archiver run --job some-collection --dry-run   # show what would be downloaded
-yt-dlp-archiver show --job some-collection            # show downloader commands
+```sh
+vca run tiktok-watch-on-desktop
 ```
 
-Run an ad-hoc URL without a job from a config file:
+The command prints the resolved configuration before it contacts the collection. Use `--dry-run` or `-n` to prevent downloads.
 
-```nushell
-yt-dlp-archiver run --url https://example.com/video --target-dir ~/desktop --yt-dlp-options firefox
+The command performs these operations:
+
+1. Get all collection item URLs with yt-dlp.
+2. Exclude URLs that occur in the collection cache.
+3. Use gallery-dl metadata to identify TikTok photo posts.
+4. Download videos with yt-dlp.
+5. Download photo posts with gallery-dl and create Matroska slideshows.
+6. Add each successful item URL to the collection cache.
+
+A failed item does not enter the cache. Thus, the next run tries that item again.
+
+## Download without a cache
+
+```sh
+vca oneshot "https://www.tiktok.com/@name/collection/example-123" --target-dir ~/Downloads/example
 ```
 
-Add `--gallery-dl-options firefox` to select a gallery-dl option set.
+`oneshot` uses the global downloader options. It does not read or write a collection cache.
 
-`show` prints the resolved settings and both downloader command lines.
+## File names
 
-## Verify and repair
+Downloads use this format:
 
-There is a process in this program that can fix previously-downloaded files that
-have no audio track (likely from TikTok).
-
-```nushell
-yt-dlp-archiver verify --job some-collection
-yt-dlp-archiver verify --job some-collection --repair
+```text
+<title> - <platform> <video_id>.<ext>
 ```
 
-`verify` probes every media file in the target directory. It reports video files
-that have no audio track. Silent TikTok photo posts are valid.
+yt-dlp sanitizes each name for the local file system. The title has a 180-byte limit.
 
-`verify --repair` fixes them in place. It reads the source URL from the embedded
-metadata, downloads only an audio-bearing format, then muxes. The existing video
-stream stays untouched. Files that already have audio are not modified.
+The photo-post path uses the same yt-dlp filename formatter. Each photo post becomes one Matroska file.
+
+The slideshow contains one 30 fps H.264 video stream. Each image appears for five seconds and starts at a keyframe.
+
+The optional AAC audio track repeats until the slideshow ends. The file also contains the original images and audio as attachments.
 
 ## systemd
 
-```nushell
-yt-dlp-archiver systemd install --all
-yt-dlp-archiver systemd status
-yt-dlp-archiver systemd uninstall --job some-collection
+Create units for one collection with this command-line schedule:
+
+```sh
+vca systemd install tiktok-watch-on-desktop --on-calendar "*-*-* 01:00:00" --randomized-delay 30m
 ```
 
-`install` writes three kinds of file into `~/.config/systemd/user`:
+The schedule does not come from the configuration file. Run `install` again to change the schedule.
 
+Use `--all` instead of a collection name to apply one schedule to every collection.
+
+```sh
+vca systemd status
+vca systemd uninstall tiktok-watch-on-desktop
 ```
-yt-dlp-archiver@.service                      shared template
-yt-dlp-archiver@.timer                        shared template
-yt-dlp-archiver@<job>.timer.d/schedule.conf   per-job schedule
+
+The `install` command creates these files:
+
+```text
+video-collection-archiver@.service
+video-collection-archiver@.timer
+video-collection-archiver@<collection>.timer.d/schedule.conf
 ```
 
-`install` is idempotent. Run it again to update the units after a config change.
-Use `--prune` to remove installed jobs that left the config. Use `--no-enable`
-to write the files without calling `systemctl`.
+Use `--no-enable` to create the files without a `systemctl` call. Use `--prune` to remove units absent from the configuration.
 
-A job with no `timer-oncalendar` gets no timer. Run it by hand.
-
-Every generated file starts with `# Managed by yt-dlp-archiver. Do not edit.`
-This serves as a marker for `uninstall`, which removes only files that carry
-this line.
-
-Inspect a job:
-
-```nushell
-systemctl --user list-timers "yt-dlp-archiver@*"
-journalctl --user --unit "yt-dlp-archiver@some-collection.service" --lines 50
-```
+The `uninstall` command removes only files that contain the managed-file marker. Use `--no-disable` to omit the `systemctl` calls.
 
 ## Shell completion
 
-Shell completion is provided by
-[carapace](https://github.com/carapace-sh/carapace).
+The project supplies a [carapace](https://carapace-sh.github.io/carapace-bin/) specification.
 
-Install the completion spec for carapace with:
-
-```bash
+```sh
 mkdir -p ~/.config/carapace/specs
-yt-dlp-archiver completions carapace > ~/.config/carapace/specs/yt-dlp-archiver.yaml
+vca completions carapace > ~/.config/carapace/specs/vca.yaml
 ```
 
-Rewrite the spec after each upgrade of yt-dlp-archiver.
-
-### Install the completion
-
-Then open a new shell to take effect.
+Regenerate the specification after each upgrade.
 
 ## Paths
 
-| Purpose            | Path                                                       |
-| ------------------ | ---------------------------------------------------------- |
-| Config             | `$XDG_CONFIG_HOME/yt-dlp-archiver/config.yaml`             |
-| yt-dlp archive     | `$XDG_STATE_HOME/yt-dlp-archiver/<job-name>.txt`           |
-| gallery-dl archive | `$XDG_STATE_HOME/yt-dlp-archiver/<job-name>.gallery-dl.txt` |
-| systemd units      | `$XDG_CONFIG_HOME/systemd/user`                            |
-| Completion spec    | `$XDG_CONFIG_HOME/carapace/specs/yt-dlp-archiver.yaml`     |
+| Purpose       | Path                                                               |
+| ------------- | ------------------------------------------------------------------ |
+| Configuration | `$XDG_CONFIG_HOME/video-collection-archiver/config.yaml`            |
+| Cache         | `$XDG_STATE_HOME/video-collection-archiver/<collection-name>.txt`   |
+| systemd units | `$XDG_CONFIG_HOME/systemd/user`                                     |
+| Completion    | `$XDG_CONFIG_HOME/carapace/specs/vca.yaml`                          |
+
+The default value of `$XDG_STATE_HOME` is `~/.local/state`.
 
 ## Develop
 
-```nushell
-uv run pytest
+```sh
+uv run ruff format --check src tests
 uv run ruff check src tests
-uv run ruff format src tests
 uv run ty check src tests
+uv run pytest
 ```

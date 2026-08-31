@@ -1,11 +1,11 @@
-"""XDG base directory resolution."""
+"""Resolve the XDG paths for video-collection-archiver."""
 
 from __future__ import annotations
 
 import os
 from pathlib import Path
 
-APP_NAME = "yt-dlp-archiver"
+APP_NAME = "video-collection-archiver"
 
 
 def _base(env_var: str, fallback: str) -> Path:
@@ -27,12 +27,8 @@ def config_file() -> Path:
     return config_home() / APP_NAME / "config.yaml"
 
 
-def archive_file(job_name: str) -> Path:
-    return state_home() / APP_NAME / f"{job_name}.txt"
-
-
-def gallery_archive_file(job_name: str) -> Path:
-    return state_home() / APP_NAME / f"{job_name}.gallery-dl.txt"
+def cache_file(collection_name: str) -> Path:
+    return state_home() / APP_NAME / f"{collection_name}.txt"
 
 
 def systemd_user_dir() -> Path:

@@ -26,7 +26,7 @@ For now, let's solve the minimum problem that I have:
     already have good machinery to make videos from (with attachments, mkv
     containers, etc).
 - The software should keep a cache file to track of which ones I have already
-  downloaded. This works well in ~/.local/cache/<program_name>/<job_name>.txt.
+  downloaded. This works well in ~/.local/state/<program_name>/<job_name>.txt.
   (I will discuss `program_name` later.) Therefore, when I run the program
   again, it should only download the new ones.
 
@@ -86,7 +86,8 @@ For now, let's solve the minimum problem that I have:
     test things). Again, also print relevant config.
   - `vca systemd`, good as-is, but again, oncalendar and other systemd stuff
     comes from command line, not config file.
-  - `vca completions`, good as-is
+  - `vca completions`, good as-is, just adjust to the new name and subcommands
+    and options.
   - `vca verify`: delete this. not necessary anymore.
 
   There are other nuances of the subcommands, just do what you think is best.
@@ -104,3 +105,6 @@ For now, let's solve the minimum problem that I have:
 
   Use best judgement for titles with sanitization and length limits. (Try to do
   what yt-dlp does, and make sure that gallery-dl can do it too)
+
+In general, I expect a complexity reduction. We're removing excessive
+abstraction and features.

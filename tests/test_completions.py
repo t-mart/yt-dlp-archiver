@@ -1,7 +1,7 @@
 import yaml
 
-from yt_dlp_archiver.cli import app
-from yt_dlp_archiver.completions import carapace_spec, render_carapace
+from vca.cli import app
+from vca.completions import carapace_spec, render_carapace
 
 
 def _spec():
@@ -9,82 +9,69 @@ def _spec():
 
 
 def _by_name(commands, name):
-    return next(c for c in commands if c["name"] == name)
+    return next(command for command in commands if command["name"] == name)
 
 
-def test_spec_names_the_program():
+def test_spec_uses_the_short_cli_name():
     spec = _spec()
-    assert spec["name"] == "yt-dlp-archiver"
+    assert spec["name"] == "vca"
     assert spec["description"]
 
 
-def test_spec_lists_the_public_commands():
-    names = {c["name"] for c in _spec()["commands"]}
-    assert names == {"completions", "list", "run", "show", "systemd", "verify"}
+def test_spec_lists_only_the_required_public_commands():
+    names = {command["name"] for command in _spec()["commands"]}
+    assert names == {"completions", "oneshot", "run", "systemd"}
 
 
 def test_hidden_commands_are_excluded():
-    """The candidate provider is an implementation detail, not a user command."""
-    assert "_complete" not in {c["name"] for c in _spec()["commands"]}
+    assert "_complete" not in {command["name"] for command in _spec()["commands"]}
 
 
-def test_value_flags_take_an_equals_suffix():
-    run = _by_name(_spec()["commands"], "run")
-    assert "--job=" in run["flags"]
-    assert "--url=" in run["flags"]
-    # A boolean flag must not take a value.
-    assert "--all" in run["flags"]
-    assert "--all=" not in run["flags"]
+def test_value_flags_use_an_equals_suffix():
+    oneshot = _by_name(_spec()["commands"], "oneshot")
+    assert "--target-dir=" in oneshot["flags"]
+    assert "--dry-run" in oneshot["flags"]
+    assert "--dry-run=" not in oneshot["flags"]
 
 
 def test_help_flag_is_present():
     run = _by_name(_spec()["commands"], "run")
+    assert run["flags"]["-h"] == "Show help and exit."
     assert run["flags"]["--help"] == "Show help and exit."
 
 
-def test_negative_flag_gets_a_negated_description():
-    install = _by_name(_by_name(_spec()["commands"], "systemd")["commands"], "install")
-    assert install["flags"]["--enable"] == "Reload systemd and start the timers."
-    assert (
-        install["flags"]["--no-enable"] == "Do not reload systemd and start the timers."
-    )
+def test_negative_flag_has_a_negative_description():
+    systemd = _by_name(_spec()["commands"], "systemd")
+    install = _by_name(systemd["commands"], "install")
+    assert install["flags"]["--enable"] == "Reload and enable the timers."
+    assert install["flags"]["--no-enable"] == "Do not reload and enable the timers."
 
 
-def test_job_flag_completes_from_the_config():
+def test_collection_arguments_use_dynamic_completion():
     run = _by_name(_spec()["commands"], "run")
-    assert run["completion"]["flag"]["job"] == ["$(yt-dlp-archiver _complete jobs)"]
-    assert run["completion"]["flag"]["yt-dlp-options"] == [
-        "$(yt-dlp-archiver _complete yt-dlp-option-sets)"
-    ]
-    assert run["completion"]["flag"]["options"] == [
-        "$(yt-dlp-archiver _complete yt-dlp-option-sets)"
-    ]
-    assert run["completion"]["flag"]["gallery-dl-options"] == [
-        "$(yt-dlp-archiver _complete gallery-dl-option-sets)"
-    ]
+    assert run["completion"]["positional"] == [["$(vca _complete collections)"]]
+    systemd = _by_name(_spec()["commands"], "systemd")
+    install = _by_name(systemd["commands"], "install")
+    assert install["completion"]["positional"] == [["$(vca _complete collections)"]]
 
 
-def test_path_flags_use_carapace_builtins():
+def test_path_flags_use_carapace_actions():
     run = _by_name(_spec()["commands"], "run")
+    oneshot = _by_name(_spec()["commands"], "oneshot")
     assert run["completion"]["flag"]["config"] == ["$files"]
-    assert run["completion"]["flag"]["target-dir"] == ["$directories"]
+    assert oneshot["completion"]["flag"]["target-dir"] == ["$directories"]
 
 
 def test_nested_subcommands_are_rendered():
     systemd = _by_name(_spec()["commands"], "systemd")
-    assert {c["name"] for c in systemd["commands"]} == {
+    assert {command["name"] for command in systemd["commands"]} == {
         "install",
-        "uninstall",
         "status",
+        "uninstall",
     }
-    uninstall = _by_name(systemd["commands"], "uninstall")
-    assert uninstall["completion"]["flag"]["job"] == [
-        "$(yt-dlp-archiver _complete jobs)"
-    ]
 
 
 def test_rendered_yaml_has_no_anchors():
-    """carapace reads the file directly, so keep it plain and readable."""
     text = render_carapace(app)
     assert "&id" not in text
     assert "*id" not in text

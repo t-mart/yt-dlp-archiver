@@ -1,7 +1,7 @@
 [project]
-name = "yt-dlp-archiver"
+name = "video-collection-archiver"
 version = "0.1.0"
-description = "Add your description here"
+description = "Archive TikTok collections with yt-dlp and gallery-dl"
 readme = "README.md"
 authors = [
     { name = "Tim Martin", email = "tim@timmart.in" }
@@ -17,11 +17,14 @@ dependencies = [
 ]
 
 [project.scripts]
-yt-dlp-archiver = "yt_dlp_archiver:main"
+vca = "vca:main"
 
 [build-system]
 requires = ["uv_build>=0.12.3,<0.13.0"]
 build-backend = "uv_build"
+
+[tool.uv.build-backend]
+module-name = "vca"
 
 [dependency-groups]
 dev = [

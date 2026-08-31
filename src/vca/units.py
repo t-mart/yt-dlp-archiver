@@ -1,9 +1,4 @@
-"""systemd user unit generation.
-
-One template pair serves every job. The instance name is the job name, so the
-URL never enters a unit file and the '%' escape problem disappears. A
-per-instance drop-in carries the schedule.
-"""
+"""Create and manage systemd user units."""
 
 from __future__ import annotations
 
@@ -13,10 +8,10 @@ from dataclasses import dataclass
 from pathlib import Path
 
 from . import paths
-from .config import Job
 
-MARKER = "# Managed by yt-dlp-archiver. Do not edit."
-PREFIX = "yt-dlp-archiver"
+MARKER = "# Managed by video-collection-archiver. Do not edit."
+PREFIX = "video-collection-archiver"
+CLI_NAME = "vca"
 SERVICE_TEMPLATE = f"{PREFIX}@.service"
 TIMER_TEMPLATE = f"{PREFIX}@.timer"
 
@@ -24,13 +19,13 @@ TIMER_TEMPLATE = f"{PREFIX}@.timer"
 def service_unit(executable: Path) -> str:
     return f"""{MARKER}
 [Unit]
-Description=yt-dlp archive job %i
+Description=Video collection archive %i
 After=network-online.target
 Wants=network-online.target
 
 [Service]
 Type=oneshot
-ExecStart={executable} run --job %i
+ExecStart={executable} run %i
 TimeoutStartSec=6h
 Nice=10
 IOSchedulingClass=idle
@@ -40,7 +35,7 @@ IOSchedulingClass=idle
 def timer_unit() -> str:
     return f"""{MARKER}
 [Unit]
-Description=Schedule for yt-dlp archive job %i
+Description=Schedule for video collection archive %i
 
 [Timer]
 Persistent=true
@@ -51,28 +46,26 @@ WantedBy=timers.target
 """
 
 
-def schedule_dropin(job: Job) -> str:
-    lines = [MARKER, "[Timer]"]
-    if job.timer_oncalendar:
-        lines.append(f"OnCalendar={job.timer_oncalendar}")
-    if job.timer_randomized_delay:
-        lines.append(f"RandomizedDelaySec={job.timer_randomized_delay}")
+def schedule_dropin(on_calendar: str, randomized_delay: str | None) -> str:
+    lines = [MARKER, "[Timer]", f"OnCalendar={on_calendar}"]
+    if randomized_delay:
+        lines.append(f"RandomizedDelaySec={randomized_delay}")
     return "\n".join(lines) + "\n"
 
 
-def instance_name(job_name: str, suffix: str) -> str:
-    return f"{PREFIX}@{job_name}.{suffix}"
+def instance_name(collection_name: str, suffix: str) -> str:
+    return f"{PREFIX}@{collection_name}.{suffix}"
 
 
-def dropin_dir(root: Path, job_name: str) -> Path:
-    return root / f"{instance_name(job_name, 'timer')}.d"
+def dropin_dir(root: Path, collection_name: str) -> Path:
+    return root / f"{instance_name(collection_name, 'timer')}.d"
 
 
 def executable_path() -> Path:
-    found = shutil.which(PREFIX)
+    found = shutil.which(CLI_NAME)
     if found:
         return Path(found).resolve()
-    return Path.home() / ".local" / "bin" / PREFIX
+    return Path.home() / ".local" / "bin" / CLI_NAME
 
 
 @dataclass(frozen=True)
@@ -99,7 +92,11 @@ def _managed(path: Path) -> bool:
 
 
 def install(
-    jobs: list[Job], root: Path | None = None, executable: Path | None = None
+    collection_names: list[str],
+    on_calendar: str,
+    randomized_delay: str | None = None,
+    root: Path | None = None,
+    executable: Path | None = None,
 ) -> list[Change]:
     target = root or paths.systemd_user_dir()
     changes: list[Change] = []
@@ -109,23 +106,20 @@ def install(
         changes,
     )
     _write(target / TIMER_TEMPLATE, timer_unit(), changes)
-    for job in jobs:
-        if not job.timer_oncalendar:
-            continue
-        _write(
-            dropin_dir(target, job.name) / "schedule.conf",
-            schedule_dropin(job),
-            changes,
-        )
+    schedule = schedule_dropin(on_calendar, randomized_delay)
+    for name in collection_names:
+        _write(dropin_dir(target, name) / "schedule.conf", schedule, changes)
     return changes
 
 
 def uninstall(
-    job_names: list[str], root: Path | None = None, drop_templates: bool = False
+    collection_names: list[str],
+    root: Path | None = None,
+    drop_templates: bool = False,
 ) -> list[Change]:
     target = root or paths.systemd_user_dir()
     changes: list[Change] = []
-    for name in job_names:
+    for name in collection_names:
         directory = dropin_dir(target, name)
         conf = directory / "schedule.conf"
         if conf.exists() and _managed(conf):

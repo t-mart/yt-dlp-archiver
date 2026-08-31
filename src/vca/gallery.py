@@ -4,7 +4,6 @@ from __future__ import annotations
 
 import json
 import os
-import shlex
 import shutil
 import subprocess
 from collections.abc import Callable, Sequence
@@ -22,7 +21,7 @@ from gallery_dl import job as gallery_job
 from gallery_dl import option as gallery_option
 
 from . import probe
-from .config import ConfigError, Job
+from .config import ConfigError
 
 SLIDE_SECONDS = 5
 VIDEO_FPS = 30
@@ -107,11 +106,6 @@ def resolve_source(
     return Source(resolved, _kind(resolved))
 
 
-def command_line(flags: Sequence[str], url: str) -> str:
-    argv = ["gallery-dl", "--config-ignore", *flags, url]
-    return " ".join(shlex.quote(part) for part in argv)
-
-
 def _cookies(value: str) -> tuple[str, str | None, str, str, str]:
     browser, _, profile = value.partition(":")
     browser, _, keyring = browser.partition("+")
@@ -150,7 +144,7 @@ def _gallery_settings(flags: Sequence[str]) -> list[tuple[Any, str, Any]]:
     return settings
 
 
-def _collector(base: type[Any], archived: set[str]) -> type[Any]:
+def _collector(base: type[Any]) -> type[Any]:
     class Collector(base):
         def __init__(self, url: Any, parent: Any = None):
             super().__init__(url, parent)
@@ -162,33 +156,20 @@ def _collector(base: type[Any], archived: set[str]) -> type[Any]:
             predicate = self.pred_post
 
             def select(url: str, metadata: dict[str, Any]) -> bool:
-                post_id = str(metadata.get("id", ""))
                 is_image = metadata.get("post_type") == "image"
                 self.is_photo = self.is_photo or is_image
-                if not is_image or post_id in archived:
+                if not is_image:
                     return False
                 return bool(predicate(url, metadata))
 
             self.pred_post = select
 
         def handle_directory(self, metadata: dict[str, Any]) -> None:
-            self.posts[str(metadata["id"])] = metadata.copy()
+            if metadata.get("post_type") == "image":
+                self.posts[str(metadata["id"])] = metadata.copy()
             super().handle_directory(metadata)
 
     return Collector
-
-
-def _read_archive(path: Path) -> set[str]:
-    try:
-        return set(path.read_text(encoding="utf-8").splitlines())
-    except FileNotFoundError:
-        return set()
-
-
-def _record_archive(path: Path, post_id: str) -> None:
-    path.parent.mkdir(parents=True, exist_ok=True)
-    with path.open("a", encoding="utf-8") as archive:
-        archive.write(post_id + "\n")
 
 
 def _yt_dlp_info(metadata: dict[str, Any], source_url: str) -> dict[str, Any]:
@@ -204,7 +185,7 @@ def _yt_dlp_info(metadata: dict[str, Any], source_url: str) -> dict[str, Any]:
         "ext": "mkv",
         "webpage_url": source_url,
         "original_url": source_url,
-        "extractor": "TikTok",
+        "extractor": "tiktok",
         "extractor_key": "TikTok",
         "uploader": user,
         "uploader_id": user,
@@ -475,15 +456,12 @@ def _post_files(directory: Path) -> tuple[list[Path], Path | None]:
 
 
 def run_photo_job(
-    job_config: Job,
     flags: Sequence[str],
     yt_dlp_options: dict[str, Any],
     source_url: str,
     simulate: bool = False,
 ) -> PhotoResult:
-    archived = _read_archive(job_config.gallery_archive_file)
-
-    with TemporaryDirectory(prefix="yt-dlp-archiver-gallery-") as temp:
+    with TemporaryDirectory(prefix="video-collection-archiver-gallery-") as temp:
         root = Path(temp)
         settings = _gallery_settings(flags)
         settings.extend(
@@ -501,7 +479,7 @@ def run_photo_job(
             )
         )
         base = gallery_job.SimulationJob if simulate else gallery_job.DownloadJob
-        collector_type = _collector(base, archived)
+        collector_type = _collector(base)
         with gallery_config.apply(settings):
             download = collector_type(source_url)
             status = download.run()
@@ -521,7 +499,6 @@ def run_photo_job(
                 if not destination.exists():
                     mux_slideshow(images, audio, destination, metadata, source_url)
                     print(f"[gallery-dl] Muxed {destination}")
-                _record_archive(job_config.gallery_archive_file, post_id)
             except (ConfigError, OSError) as error:
                 print(f"[gallery-dl] error: {error}")
                 status |= 1

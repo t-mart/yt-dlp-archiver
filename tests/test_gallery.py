@@ -3,14 +3,13 @@ from __future__ import annotations
 import json
 import subprocess
 from contextlib import nullcontext
-from dataclasses import replace
 from pathlib import Path
 from types import SimpleNamespace
 
 import pytest
 
-from yt_dlp_archiver import gallery, probe, runner
-from yt_dlp_archiver.config import parse
+from vca import gallery, probe, runner
+from vca.config import parse
 
 
 def _ffmpeg(*args: str) -> None:
@@ -91,7 +90,7 @@ def test_browser_cookie_option_matches_gallery_dl_tuple():
     )
 
 
-def test_archived_photo_still_matches_gallery_dl():
+def test_collector_selects_only_photo_posts():
     class Base:
         def __init__(self, _url, _parent=None):
             self.pred_post = lambda *_: True
@@ -102,10 +101,11 @@ def test_archived_photo_still_matches_gallery_dl():
         def handle_directory(self, _metadata):
             return None
 
-    download = gallery._collector(Base, {"123456789"})("unused")
+    download = gallery._collector(Base)("unused")
     download._init()
 
-    assert not download.pred_post("", {"id": "123456789", "post_type": "image"})
+    assert download.pred_post("", {"id": "123456789", "post_type": "image"})
+    assert not download.pred_post("", {"id": "2", "post_type": "video"})
     assert download.is_photo
 
 
@@ -203,7 +203,6 @@ def test_mux_creates_a_standard_slideshow_with_original_media(
     assert data["format"]["tags"]["COMMENT"] == gallery.SLIDESHOW_COMMENT
     assert data["format"]["tags"]["SOURCE_URL"] == source_url
     assert data["format"]["tags"]["MEDIA_TYPE"] == "tiktok-photo"
-    assert probe.source_url(destination) == source_url
 
     for index, original in enumerate(images, start=1):
         extracted = tmp_path / f"attachment-{index}{original.suffix}"
@@ -291,7 +290,7 @@ def test_mux_accepts_a_photo_post_without_audio(slideshow_sources, tmp_path):
 def test_photo_filename_uses_the_yt_dlp_template(tmp_path):
     options = {
         "paths": {"home": str(tmp_path)},
-        "outtmpl": {"default": "%(title)s [%(id)s].%(ext)s"},
+        "outtmpl": {"default": runner.OUTPUT_TEMPLATE},
         "quiet": True,
     }
     destination = gallery._destination(
@@ -299,44 +298,14 @@ def test_photo_filename_uses_the_yt_dlp_template(tmp_path):
         _metadata(),
         "https://www.tiktok.com/@someone/photo/123456789",
     )
-    assert destination == tmp_path / "A title #one #two [123456789].mkv"
+    assert destination == tmp_path / "A title #one #two - tiktok 123456789.mkv"
 
 
-def test_runner_routes_a_photo_to_gallery_dl(monkeypatch, tmp_path):
-    monkeypatch.setenv("XDG_STATE_HOME", str(tmp_path / "state"))
-    document = {
-        "gallery-dl-options": {"firefox": {"cookies-from-browser": "firefox"}},
-        "archive-jobs": {
-            "demo": {
-                "url": "https://www.tiktok.com/t/short/",
-                "target-dir": str(tmp_path),
-                "gallery-dl-options": "firefox",
-            }
-        },
-    }
-    config = parse(document, Path("config.yaml"))
-    job = replace(config.job("demo"), name="photo-test")
-    resolved = "https://www.tiktok.com/@someone/photo/123456789"
-    monkeypatch.setattr(
-        gallery, "resolve_source", lambda _: gallery.Source(resolved, "photo")
-    )
-    called = {}
-
-    def run_photo(*args):
-        called["args"] = args
-        return SimpleNamespace(status=7, is_photo=True)
-
-    monkeypatch.setattr(gallery, "run_photo_job", run_photo)
-    assert runner.run_job(config, job) == 7
-    assert called["args"][3] == resolved
-    assert called["args"][1] == ("--cookies-from-browser", "firefox")
-
-
-def test_photo_job_records_only_a_complete_mux(monkeypatch, tmp_path):
+def test_photo_job_creates_a_complete_mux(monkeypatch, tmp_path):
     monkeypatch.setenv("XDG_STATE_HOME", str(tmp_path / "state"))
     config = parse(
         {
-            "archive-jobs": {
+            "collections": {
                 "demo": {
                     "url": "https://www.tiktok.com/@someone/video/123456789",
                     "target-dir": str(tmp_path),
@@ -345,7 +314,7 @@ def test_photo_job_records_only_a_complete_mux(monkeypatch, tmp_path):
         },
         Path("config.yaml"),
     )
-    job = config.job("demo")
+    collection = config.collection("demo")
     metadata = {
         **_metadata(),
         "post_type": "image",
@@ -388,11 +357,11 @@ def test_photo_job_records_only_a_complete_mux(monkeypatch, tmp_path):
         lambda *_: destination.touch(),
     )
 
-    result = gallery.run_photo_job(job, (), {}, job.url)
+    result = gallery.run_photo_job((), {}, collection.url)
 
     assert result.status == 0
     assert result.is_photo
     assert destination.exists()
-    assert job.gallery_archive_file.read_text() == "123456789\n"
+    assert not collection.cache_file.exists()
     assert any(path == () and key == "base-directory" for path, key, _ in applied)
     assert (("extractor", "tiktok"), "videos", False) in applied

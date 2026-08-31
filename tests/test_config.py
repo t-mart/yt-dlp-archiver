@@ -2,12 +2,12 @@ from pathlib import Path
 
 import pytest
 
-from yt_dlp_archiver.config import ConfigError, parse, render_flags
+from vca.config import ConfigError, parse, render_flags
 
 SOURCE = Path("config.yaml")
 
 
-def test_render_flags_covers_every_value_form():
+def test_render_flags_covers_each_value_form():
     argv = render_flags(
         {
             "embed-subs": None,
@@ -30,97 +30,93 @@ def test_render_flags_covers_every_value_form():
     )
 
 
-def test_render_flags_keeps_declaration_order():
-    assert render_flags({"b": None, "a": None}) == ("--b", "--a")
-
-
-def _document(**job):
-    base = {"url": "https://example.com/v", "target-dir": "/tmp/x"}
+def _document(**collection):
+    base = {"url": "https://example.com/collection", "target-dir": "/tmp/x"}
     return {
-        "yt-dlp-options": {"set-a": {"embed-subs": None}},
-        "gallery-dl-options": {"gallery-a": {"cookies-from-browser": "firefox"}},
-        "archive-jobs": {"j": {**base, **job}},
+        "yt-dlp-options": {"embed-subs": None},
+        "gallery-dl-options": {"cookies-from-browser": "firefox"},
+        "collections": {"demo": {**base, **collection}},
     }
 
 
-def test_parse_reads_a_job():
-    config = parse(
-        _document(
-            **{
-                "yt-dlp-options": "set-a",
-                "gallery-dl-options": "gallery-a",
-                "timer-oncalendar": "daily",
-            }
-        ),
-        SOURCE,
-    )
-    job = config.job("j")
-    assert job.url == "https://example.com/v"
-    assert job.target_dir == Path("/tmp/x")
-    assert job.yt_dlp_options == ("set-a",)
-    assert job.gallery_dl_options == ("gallery-a",)
-    assert job.timer_oncalendar == "daily"
-
-
-def test_options_accepts_a_list():
-    config = parse(_document(**{"yt-dlp-options": ["set-a", "set-a"]}), SOURCE)
-    assert config.yt_dlp_argv_for(config.job("j")) == (
-        "--embed-subs",
-        "--embed-subs",
-    )
-
-
-def test_options_may_be_absent():
+def test_parse_reads_global_options_and_a_collection():
     config = parse(_document(), SOURCE)
-    assert config.yt_dlp_argv_for(config.job("j")) == ()
-    assert config.gallery_dl_argv_for(config.job("j")) == ()
+    collection = config.collection("demo")
+    assert collection.url == "https://example.com/collection"
+    assert collection.target_dir == Path("/tmp/x")
+    assert config.yt_dlp_options == ("--embed-subs",)
+    assert config.gallery_dl_options == ("--cookies-from-browser", "firefox")
 
 
-def test_gallery_options_render_as_flags():
-    config = parse(_document(**{"gallery-dl-options": "gallery-a"}), SOURCE)
-    assert config.gallery_dl_argv_for(config.job("j")) == (
-        "--cookies-from-browser",
-        "firefox",
-    )
-
-
-def test_target_dir_expands_home(monkeypatch, tmp_path):
+def test_target_directory_expands_home(monkeypatch, tmp_path):
     monkeypatch.setenv("HOME", str(tmp_path))
     config = parse(_document(**{"target-dir": "~/videos"}), SOURCE)
-    assert config.job("j").target_dir == tmp_path / "videos"
+    assert config.collection("demo").target_dir == tmp_path / "videos"
 
 
-def test_unknown_job_names_the_known_ones():
+def test_cache_uses_xdg_state_home(monkeypatch, tmp_path):
+    monkeypatch.setenv("XDG_STATE_HOME", str(tmp_path / "state"))
+    monkeypatch.setenv("XDG_CACHE_HOME", str(tmp_path / "cache"))
+    collection = parse(_document(), SOURCE).collection("demo")
+    assert collection.cache_file == (
+        tmp_path / "state/video-collection-archiver/demo.txt"
+    )
+
+
+def test_cache_defaults_to_local_state(monkeypatch, tmp_path):
+    monkeypatch.delenv("XDG_STATE_HOME", raising=False)
+    monkeypatch.setenv("HOME", str(tmp_path))
+    collection = parse(_document(), SOURCE).collection("demo")
+    assert collection.cache_file == (
+        tmp_path / ".local/state/video-collection-archiver/demo.txt"
+    )
+
+
+def test_unknown_collection_names_the_known_collections():
     config = parse(_document(), SOURCE)
-    with pytest.raises(ConfigError, match="Known jobs: j"):
-        config.job("nope")
+    with pytest.raises(ConfigError, match="Known collections: demo"):
+        config.collection("missing")
 
 
-def test_unknown_option_set_is_reported():
-    config = parse(_document(**{"yt-dlp-options": "missing"}), SOURCE)
-    with pytest.raises(ConfigError, match="Known sets: set-a"):
-        config.yt_dlp_argv_for(config.job("j"))
+def test_option_profiles_are_rejected():
+    document = _document()
+    document["yt-dlp-options"] = {"firefox": {"embed-subs": None}}
+    with pytest.raises(ConfigError, match="one global option mapping, not profiles"):
+        parse(document, SOURCE)
 
 
-def test_old_job_options_key_names_its_replacement():
-    with pytest.raises(ConfigError, match="renamed to 'yt-dlp-options'"):
-        parse(_document(options="set-a"), SOURCE)
+def test_old_collection_section_is_rejected():
+    with pytest.raises(ConfigError, match="use 'collections', not 'archive-jobs'"):
+        parse({"archive-jobs": {}}, SOURCE)
+
+
+def test_timer_values_are_rejected_in_a_collection():
+    with pytest.raises(ConfigError, match="unsupported keys: 'timer-oncalendar'"):
+        parse(_document(**{"timer-oncalendar": "daily"}), SOURCE)
+
+
+def test_unknown_top_level_keys_are_rejected():
+    document = _document()
+    document["unknown"] = {}
+    with pytest.raises(ConfigError, match="unsupported top-level keys: 'unknown'"):
+        parse(document, SOURCE)
 
 
 @pytest.mark.parametrize("name", ["has space", "slash/name", "at@sign", ""])
-def test_invalid_job_names_are_rejected(name):
-    document = {"archive-jobs": {name: {"url": "u", "target-dir": "/tmp"}}}
+def test_invalid_collection_names_are_rejected(name):
+    document = {"collections": {name: {"url": "url", "target-dir": "/tmp"}}}
     with pytest.raises(ConfigError):
         parse(document, SOURCE)
 
 
-def test_job_needs_url_and_target_dir():
-    with pytest.raises(ConfigError, match="needs a 'url'"):
-        parse({"archive-jobs": {"j": {"target-dir": "/tmp"}}}, SOURCE)
+def test_collection_needs_a_url_and_target_directory():
+    with pytest.raises(ConfigError, match="needs a nonempty 'url'"):
+        parse({"collections": {"demo": {"target-dir": "/tmp"}}}, SOURCE)
     with pytest.raises(ConfigError, match="needs a 'target-dir'"):
-        parse({"archive-jobs": {"j": {"url": "u"}}}, SOURCE)
+        parse({"collections": {"demo": {"url": "url"}}}, SOURCE)
 
 
-def test_empty_document_is_valid():
-    config = parse(None, SOURCE)
-    assert config.jobs == {}
+@pytest.mark.parametrize("document", [None, {}, [], "text"])
+def test_invalid_documents_fail(document):
+    with pytest.raises(ConfigError):
+        parse(document, SOURCE)
